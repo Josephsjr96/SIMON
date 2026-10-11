@@ -304,26 +304,26 @@ impl Receipt {
         output_token_ids: &[u32],
     ) -> Result<(), SimonError> {
         let w = self.wiazania.as_ref().ok_or_else(|| {
-            SimonError::ReceiptMismatch("brak wiązań M1 (poziom 0)".into())
+            SimonError::ReceiptMismatch("no M1 bindings (proof level 0)".into())
         })?;
         if w.tokenizer_hash != tokenizer_hash {
             return Err(SimonError::ReceiptMismatch(
-                "tokenizer_hash niezgodny z receiptem".into(),
+                "tokenizer_hash does not match the receipt".into(),
             ));
         }
         if w.client_nonce != client_nonce {
-            return Err(SimonError::ReceiptMismatch("client_nonce niezgodny".into()));
+            return Err(SimonError::ReceiptMismatch("client_nonce does not match".into()));
         }
         let oczekiwany_pd = odcisk_promptu(tokenizer_hash, client_nonce, prompt_token_ids)?;
         if w.prompt_digest != oczekiwany_pd {
             return Err(SimonError::ReceiptMismatch(
-                "prompt_digest niezgodny — to nie ten prompt".into(),
+                "prompt_digest mismatch — not this prompt".into(),
             ));
         }
         let oczekiwany_lc = lancuch_tokenow(&w.prompt_digest, output_token_ids)?;
         if w.output_token_chain != oczekiwany_lc {
             return Err(SimonError::ReceiptMismatch(
-                "output_token_chain niezgodny — to nie ten output".into(),
+                "output_token_chain mismatch — not this output".into(),
             ));
         }
         Ok(())
@@ -374,13 +374,13 @@ impl Receipt {
         // Bramka 3: receipt dotyczy tego joba i tego node'a.
         if self.job_id != expected_job_id {
             return Err(SimonError::ReceiptMismatch(format!(
-                "job_id: receipt={} oczekiwano={}",
+                "job_id: receipt={} expected={}",
                 self.job_id, expected_job_id
             )));
         }
         if self.node_id != expected_node_id {
             return Err(SimonError::ReceiptMismatch(format!(
-                "node_id: receipt={} oczekiwano={}",
+                "node_id: receipt={} expected={}",
                 self.node_id, expected_node_id
             )));
         }

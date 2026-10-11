@@ -40,15 +40,15 @@ pub const PROTOCOL_VERSION: &str = "simon/v1";
 
 #[derive(Debug, Error)]
 pub enum SimonError {
-    #[error("podpis nieprawidłowy")]
+    #[error("invalid signature")]
     BadSignature,
-    #[error("receipt niezgodny z jobem: {0}")]
+    #[error("receipt does not match the job: {0}")]
     ReceiptMismatch(String),
-    #[error("klucz nie zarejestrowany")]
+    #[error("key not registered")]
     UnregisteredKey,
-    #[error("błąd serializacji: {0}")]
+    #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
-    #[error("błąd kryptograficzny: {0}")]
+    #[error("crypto error: {0}")]
     Crypto(String),
 }
 
