@@ -41,7 +41,8 @@ def to_prompt(messages):
 def log_job(model, r):
     if not JOBLOG:
         return
-    rc = r.get("receipt", {})
+    # the published feed must never carry text: drop such fields even if a future receipt adds them
+    rc = {k: v for k, v in r.get("receipt", {}).items() if k not in ("output", "prompt")}
     line = json.dumps({"ts": time.time(), "model": model, "job_id": r.get("job_id"), "node_id": rc.get("node_id"),
                        "prompt_tokens": rc.get("prompt_tokens"), "completion_tokens": rc.get("completion_tokens"),
                        "job_ms": r.get("_job_ms"), "receipt": rc,

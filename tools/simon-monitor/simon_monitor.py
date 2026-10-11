@@ -139,8 +139,11 @@ def loop(st, tail):
             st.gpu = gpus
             for i, n in enumerate(st.nodes):
                 g = gpus.get(n.get("gpu"))
+                h = st.hist[i]
+                if n.get("gpu") is not None and not g:
+                    for k in ("util", "temp", "power", "vram"):
+                        h[k].append(None)  # a missed sample is a visible gap, not a squeezed timeline
                 if g:
-                    h = st.hist[i]
                     h["util"].append(g["util"]); h["temp"].append(g["temp_c"]); h["power"].append(g["power_w"])
                     h["vram"].append(round(100 * g["vram_used_mb"] / g["vram_total_mb"], 1) if g["vram_total_mb"] else None)
             for j in new:

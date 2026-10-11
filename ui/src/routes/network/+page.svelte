@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { base } from '$app/paths';
   import { verifyReceipt } from '$lib/verify';
   import Sparkline from '$lib/components/Sparkline.svelte';
 
@@ -90,7 +91,7 @@
             <p class="mt-3 mono text-xs text-neutral-500">{n.gpu.name}{#if n.shared_with} · GPU shared with {n.shared_with}: load is not all SIMON's{/if}</p>
             <div class="mt-3 grid grid-cols-2 gap-4">
               <div><p class="mono text-xs text-neutral-500">GPU load</p><p class="mono text-2xl">{fmt(n.gpu.util)}<span class="text-sm text-neutral-500"> %</span></p><Sparkline values={n.history.util} max={100} /></div>
-              <div><p class="mono text-xs text-neutral-500">VRAM</p><p class="mono text-2xl">{fmt((n.gpu.vram_used_mb ?? 0) / 1024, 1)}<span class="text-sm text-neutral-500"> / {fmt((n.gpu.vram_total_mb ?? 0) / 1024, 0)} GB</span></p><Sparkline values={n.history.vram} max={100} /></div>
+              <div><p class="mono text-xs text-neutral-500">VRAM</p><p class="mono text-2xl">{fmt(n.gpu.vram_used_mb == null ? null : n.gpu.vram_used_mb / 1024, 1)}<span class="text-sm text-neutral-500"> / {fmt(n.gpu.vram_total_mb == null ? null : n.gpu.vram_total_mb / 1024, 0)} GB</span></p><Sparkline values={n.history.vram} max={100} /></div>
               <div><p class="mono text-xs text-neutral-500">Temp</p><p class="mono text-2xl">{fmt(n.gpu.temp_c)}<span class="text-sm text-neutral-500"> °C</span></p><Sparkline values={n.history.temp} max={100} color="#f59e0b" /></div>
               <div><p class="mono text-xs text-neutral-500">Power</p><p class="mono text-2xl">{fmt(n.gpu.power_w)}<span class="text-sm text-neutral-500"> W / {fmt(n.gpu.power_limit_w)}</span></p><Sparkline values={n.history.power} max={n.gpu.power_limit_w} color="#38bdf8" /></div>
             </div>
@@ -133,7 +134,7 @@
           </tbody>
         </table>
       </div>
-      <p class="mt-2 text-xs text-neutral-500">The answers are not published here, so this checks the signature over the whole receipt, not that a given answer matches it. To check an answer, use the <a class="underline" href="./demo">demo</a> or <code>simon verify</code>.</p>
+      <p class="mt-2 text-xs text-neutral-500">The answers are not published here, so this checks the signature over the whole receipt, not that a given answer matches it. To check an answer, use the <a class="underline" href="{base}/demo">demo</a> or <code>simon verify</code>.</p>
     {/if}
   {/if}
 </section>
