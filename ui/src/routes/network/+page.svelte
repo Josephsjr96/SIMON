@@ -29,6 +29,8 @@
     try {
       const r = await fetch(api(), { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // a catch-all site in front can answer 200 with HTML: that is not a monitor
+      if (!(r.headers.get('content-type') ?? '').includes('json')) throw new Error('no SIMON monitor at this address');
       snap = (await r.json()) as Snap;
       err = null;
       for (const j of snap.jobs) {
