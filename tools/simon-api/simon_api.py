@@ -12,13 +12,17 @@ nodes.json: {"<model name>": {"bootstrap": "/ip4/.../tcp/.../p2p/<peer_id>", "mo
 What a receipt proves here: the node's key signed this exact output for this job
 (proof level 0). It does NOT prove which model ran — see docs/THREAT-MODEL.md.
 """
-import json, os, subprocess, time, uuid
+import json, os, subprocess, threading, time, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BIN = os.environ.get("SIMON_BIN", "simon")
 HOST, PORT = "127.0.0.1", int(os.environ.get("SIMON_API_PORT", "18600"))
 TIMEOUT_S = int(os.environ.get("SIMON_API_TIMEOUT", "600"))
 IDENTITY = os.environ.get("SIMON_API_IDENTITY", os.path.expanduser("~/.simon/api-client.id"))
+# Optional job log for tools/simon-monitor: one JSON line per completed job. Receipt fields and
+# timings only — never the prompt or the output.
+JOBLOG = os.environ.get("SIMON_API_JOBLOG", "")
+_joblog_lock = threading.Lock()
 NODES = json.load(open(os.environ["SIMON_API_NODES"])) if os.environ.get("SIMON_API_NODES") else {}
 
 
@@ -34,17 +38,44 @@ def to_prompt(messages):
     return "\n\n".join(parts) if len(parts) > 1 else (parts[0].split(": ", 1)[1] if parts else "")
 
 
+def log_job(model, r):
+    if not JOBLOG:
+        return
+    rc = r.get("receipt", {})
+    line = json.dumps({"ts": time.time(), "model": model, "job_id": r.get("job_id"), "node_id": rc.get("node_id"),
+                       "prompt_tokens": rc.get("prompt_tokens"), "completion_tokens": rc.get("completion_tokens"),
+                       "job_ms": r.get("_job_ms"), "receipt": rc,
+                       "verification_status": "not_performed", "proof_level": 0}) + "\n"
+    with _joblog_lock, open(JOBLOG, "a") as f:  # one write per line under a lock: no torn lines
+        f.write(line)
+
+
+_node_locks = {}
+
+
+def node_lock(node):
+    # ponytail: one job at a time per node. The node handles one prompt at a time and, measured
+    # 2026-10-11, drops prompts that arrive while it is busy (the agent then waits with no reply).
+    # Queue here instead; drop this when the node accepts concurrent jobs.
+    return _node_locks.setdefault(node["bootstrap"], threading.Lock())
+
+
 def run_job(node, prompt, max_tokens):
     # ponytail: one process per request (~1 s libp2p setup each); a long-lived agent if throughput matters.
     # Note: --prompt is visible in `ps` to other local users; the agent has no stdin mode yet.
     cmd = [BIN, "--role", "agent", "--bootstrap", node["bootstrap"], "--model-hash", node["model_hash"],
            "--prompt", prompt, "--max-tokens", str(max_tokens), "--identity-file", IDENTITY, "--json"]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S)
+    with node_lock(node):
+        t0 = time.time()
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S)
+        job_ms = int((time.time() - t0) * 1000)  # excludes time spent queued for the node
     # --json should print one JSON object, but the CLI also prints a log line first: take the JSON line.
     js = next((l for l in reversed(p.stdout.splitlines()) if l.startswith("{")), None)
     if p.returncode != 0 or js is None:
         raise RuntimeError((p.stderr or p.stdout)[-800:])
-    return json.loads(js)
+    r = json.loads(js)
+    r["_job_ms"] = job_ms
+    return r
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -115,6 +146,7 @@ class Handler(BaseHTTPRequestHandler):
                 "receipt_hash": (r.get("obserwacja_klienta") or {}).get("receipt_hash"),
             },
         }
+        log_job(req.get("model"), r)
         self._send(200, out, headers=[("x-simon-job-id", str(r.get("job_id"))),
                                        ("x-simon-node-id", str(rc.get("node_id")))])
 
