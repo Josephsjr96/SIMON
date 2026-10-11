@@ -12,6 +12,7 @@ monitor.json:
     {"nodes": [{"label": "RTX 3090 · Poland", "model": "qwen2.5-3b-q8", "gpu": 1,
                 "shared_with": "Strata"}]}
   model       — the gateway's model name; jobs are matched to the node by it
+  node_id     — optional: match jobs by the receipt's node_id instead (two nodes serving one model)
   gpu         — nvidia-smi index (PCI order) to sample, or null for a remote node (no telemetry)
   shared_with — shown on the card: GPU load is not all SIMON's
 
@@ -95,7 +96,9 @@ class State:
         self.last_job = {}
 
     def add_job(self, j):
-        idx = next((i for i, n in enumerate(self.nodes) if n.get("model") == j.get("model")), None)
+        idx = next((i for i, n in enumerate(self.nodes) if n.get("node_id") and n["node_id"] == j.get("node_id")), None)
+        if idx is None:
+            idx = next((i for i, n in enumerate(self.nodes) if not n.get("node_id") and n.get("model") == j.get("model")), None)
         ms = j.get("job_ms") or 0
         ct = j.get("completion_tokens") or 0
         j["node_label"] = self.nodes[idx]["label"] if idx is not None else None
@@ -119,6 +122,7 @@ class State:
                 last = self.last_job.get(i)
                 nodes.append({
                     "label": n["label"], "model": n.get("model"), "shared_with": n.get("shared_with"),
+                    "telemetry": "remote" if n.get("gpu") is None else ("ok" if g else "unavailable"),
                     "state": "active" if last and now - last <= ACTIVE_S else ("idle" if last else "no_jobs"),
                     "last_job_age_s": round(now - last) if last else None,
                     "gpu": g, "history": {k: list(v) for k, v in self.hist[i].items()},
@@ -182,6 +186,9 @@ def selfcheck():
     s.add_job({"model": "m", "job_ms": 2000, "completion_tokens": 100, "ts": time.time()})
     snap = s.snapshot()
     assert snap["nodes"][0]["state"] == "active" and snap["jobs"][0]["tok_s"] == 50.0 and snap["totals"]["jobs"] == 1
+    s2 = State([{"label": "a", "model": "m", "node_id": "A", "gpu": None}, {"label": "b", "model": "m", "node_id": "B", "gpu": None}])
+    s2.add_job({"model": "m", "node_id": "B", "job_ms": 1000, "completion_tokens": 10, "ts": time.time()})
+    assert [n["state"] for n in s2.snapshot()["nodes"]] == ["no_jobs", "active"]  # same model, matched by node_id
 
 
 if __name__ == "__main__":

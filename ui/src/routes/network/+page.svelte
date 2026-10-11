@@ -7,7 +7,7 @@
   // No fake data: if the monitor is unreachable (e.g. on GitHub Pages) the page says so.
   type Gpu = { name: string; util: number | null; vram_used_mb: number | null; vram_total_mb: number | null;
                temp_c: number | null; power_w: number | null; power_limit_w: number | null };
-  type Node = { label: string; model: string | null; shared_with: string | null; state: 'active' | 'idle' | 'no_jobs';
+  type Node = { label: string; model: string | null; shared_with: string | null; telemetry: 'ok' | 'unavailable' | 'remote'; state: 'active' | 'idle' | 'no_jobs';
                 last_job_age_s: number | null; gpu: Gpu | null; history: Record<string, (number | null)[]> };
   type Job = { ts: number; model: string; job_id: string; node_id: string; node_label: string | null;
                completion_tokens: number | null; job_ms: number | null; tok_s: number | null;
@@ -26,7 +26,7 @@
 
   async function poll() {
     try {
-      const r = await fetch(api(), { cache: 'no-store' });
+      const r = await fetch(api(), { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       snap = (await r.json()) as Snap;
       err = null;
@@ -36,7 +36,8 @@
         // Signature only: the monitor never ships the answer, so output binding cannot be checked here.
         verifyReceipt(JSON.stringify(j.receipt), null)
           .then((v) => (sig[j.job_id] = { ok: v.parsuje_sie && v.podpis_ok, why: v.powod }))
-          .catch((e) => (sig[j.job_id] = { ok: false, why: String(e) }));
+          .catch((e) => (sig[j.job_id] = { ok: false, why: String(e) }))
+          .finally(() => pending.delete(j.job_id));
       }
     } catch (e) {
       err = String(e);
@@ -94,7 +95,7 @@
               <div><p class="mono text-xs text-neutral-500">Power</p><p class="mono text-2xl">{fmt(n.gpu.power_w)}<span class="text-sm text-neutral-500"> W / {fmt(n.gpu.power_limit_w)}</span></p><Sparkline values={n.history.power} max={n.gpu.power_limit_w} color="#38bdf8" /></div>
             </div>
           {:else}
-            <p class="mt-3 mono text-xs text-neutral-500">no GPU telemetry for this node (remote)</p>
+            <p class="mt-3 mono text-xs text-neutral-500">{n.telemetry === 'remote' ? 'no GPU telemetry for this node (remote)' : 'GPU telemetry unavailable (nvidia-smi gave no data)'}</p>
           {/if}
           <div class="mt-4">
             <p class="mono text-xs text-neutral-500">tok/s per job (timed by the gateway; includes job setup, not queueing)</p>
@@ -124,7 +125,7 @@
                 <td class="p-2 text-neutral-400" title={j.node_id}>{short(j.node_id)}</td>
                 <td class="p-2">
                   {#if !sig[j.job_id]}<span class="text-neutral-500">checking…</span>
-                  {:else if sig[j.job_id].ok}<span class="text-valid">signature valid</span>
+                  {:else if sig[j.job_id].ok}<span class="text-valid">signature valid</span> <span class="text-neutral-500">· output not checked</span>
                   {:else}<span class="text-bad" title={sig[j.job_id].why ?? ''}>signature invalid</span>{/if}
                 </td>
               </tr>
