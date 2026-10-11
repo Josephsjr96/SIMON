@@ -17,6 +17,7 @@
   let snap = $state<Snap | null>(null);
   let err = $state<string | null>(null);
   let sig = $state<Record<string, { ok: boolean; why: string | null }>>({});
+  const pending = new Set<string>(); // checks in flight, so overlapping polls don't verify twice
 
   const api = () => new URLSearchParams(location.search).get('api') ?? '/simon-monitor/api/monitor';
   const fmt = (v: number | null | undefined, d = 0) => (v == null ? '–' : v.toFixed(d));
@@ -30,7 +31,8 @@
       snap = (await r.json()) as Snap;
       err = null;
       for (const j of snap.jobs) {
-        if (sig[j.job_id]) continue;
+        if (sig[j.job_id] || pending.has(j.job_id)) continue;
+        pending.add(j.job_id);
         // Signature only: the monitor never ships the answer, so output binding cannot be checked here.
         verifyReceipt(JSON.stringify(j.receipt), null)
           .then((v) => (sig[j.job_id] = { ok: v.parsuje_sie && v.podpis_ok, why: v.powod }))
@@ -122,8 +124,8 @@
                 <td class="p-2 text-neutral-400" title={j.node_id}>{short(j.node_id)}</td>
                 <td class="p-2">
                   {#if !sig[j.job_id]}<span class="text-neutral-500">checking…</span>
-                  {:else if sig[j.job_id].ok}<span class="text-valid">VALID</span>
-                  {:else}<span class="text-bad" title={sig[j.job_id].why ?? ''}>INVALID</span>{/if}
+                  {:else if sig[j.job_id].ok}<span class="text-valid">signature valid</span>
+                  {:else}<span class="text-bad" title={sig[j.job_id].why ?? ''}>signature invalid</span>{/if}
                 </td>
               </tr>
             {/each}

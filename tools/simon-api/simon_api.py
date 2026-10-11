@@ -45,6 +45,9 @@ def log_job(model, r):
     line = json.dumps({"ts": time.time(), "model": model, "job_id": r.get("job_id"), "node_id": rc.get("node_id"),
                        "prompt_tokens": rc.get("prompt_tokens"), "completion_tokens": rc.get("completion_tokens"),
                        "job_ms": r.get("_job_ms"), "receipt": rc,
+                       # same three claims as the API response: the gateway only logs jobs whose
+                       # receipt it verified (signature + output binding); execution is not verified
+                       "execution_status": "completed", "receipt_status": "signature_valid_output_bound",
                        "verification_status": "not_performed", "proof_level": 0}) + "\n"
     with _joblog_lock, open(JOBLOG, "a") as f:  # one write per line under a lock: no torn lines
         f.write(line)
