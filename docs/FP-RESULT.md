@@ -18,6 +18,10 @@ shipped metric), unit = one prompt text, `max_poza = 0.02`, `k = 2`, `max_margin
 | cpu (different backend) | 5/32 | 0.0312 |
 | cpu_b512 (batching) | 6/32 | 0.0328 |
 | kv_q4 (cache quantization) | **26/32** | 0.1437 |
+| amd_mi300x (ROCm/HIP, added 2026-10-11) | 5/32 — the same 5 prompts as `ref` | 0.0312 |
+
+**AMD arm (2026-10-11):** an honest MI300X adds no false positives beyond the reference's own
+self-check; output byte-identical to NVIDIA on 22/32 prompts. Details: `docs/AMD-MI300X-RESULTS.md`.
 
 ## Verdict (per pre-registration)
 
@@ -45,12 +49,10 @@ inference-regime noise floor** — the "one token in twenty" problem the reviewe
 
 ## Limitations / next
 
-- 7 of the 11 pre-registered configs not yet run: `kv_q8`, partial `-ngl`, flash-attn,
-  older commit, `-np 4` parallel load, Vulkan, and **ROCm/HIP on MI300X (AMD)**.
+- 6 of the 11 pre-registered configs not yet run: `kv_q8`, partial `-ngl`, flash-attn,
+  older commit, `-np 4` parallel load, Vulkan. (ROCm/HIP on MI300X ran on 2026-10-11, above.)
 - Blocker on the 3090: a separate MiMo-V2.6 Q8 server holds ~15 GB (not disturbed); the GPU
   arms that need more than one 3B at a time must run sequentially or after it is idle.
-- The AMD arm is the highest-value remaining one (different vendor + hackathon requirement);
-  credits activate ~12 October.
 - **No AUROC is published** (pre-registration). Any further M3 work is blocked until the
   matrix is complete; the current evidence already says M3 is not a detector.
 

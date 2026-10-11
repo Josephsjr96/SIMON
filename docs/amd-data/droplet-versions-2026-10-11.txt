@@ -1,0 +1,12 @@
+== versions
+Version: 0.27.1+rocm723
+7.2.3
+571d0d540
+60aa7b942eba2ebef12ba3c68530a9fbc7d7e9ef4191c8c3f90e6c1ad3a940cb  /usr/local/bin/simon
+GPU[0]		: Card Series: 		AMD Instinct MI300X VF
+GPU[0]		: Card SKU: 		M3000108
+a680f44a06920e5d689774823782006aa3acc8db95750323373b24139b67e348  Qwen3.8-27B-Q8_0.gguf
+Q4: 322e194f... (verified equal to local)
+CACHEDIR.TAG
+models--Qwen--Qwen3.8-27B
+1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
