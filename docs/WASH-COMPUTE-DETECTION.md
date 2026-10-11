@@ -1,8 +1,15 @@
 # Wash-Compute Resistance: Measure Deterrence and Detection Together
 
-**Status:** Research proposal, revision 2. No implementation yet.
+**Status:** Research proposal,
+revision 2. 
+No implementation yet.
+
 **Author:** Yousef Sanjari (Joe)
+
+
 **Date:** 2026-10-11
+
+
 **Context:** SIMON, verifiable LLM inference on untrusted, heterogeneous hardware
 
 **Revision 2 changes:** deterrence and detection are now treated as complementary (§1.1); the evaluation is against an adaptive attacker with grouped splits (§4, §5); the data plan uses public workload traces and a simulated SIMON market instead of the demo Worker (§3); privacy handling is stricter (§3.3); the "first dataset" claim is removed (§2.2); scope is moved to after the 18 October submission (§9).
