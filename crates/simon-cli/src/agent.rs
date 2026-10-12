@@ -442,24 +442,40 @@ fn zbuduj_zlecenie(
 
 /// Wysyła `request` do `peer` na istniejącym swarmie i czeka na odpowiedź
 /// (to samo połączenie). Zwraca odpowiedź + czas sieciowy w ms.
-async fn wyslij_i_czekaj(
+pub(crate) async fn wyslij_i_czekaj(
     swarm: &mut Swarm<Zachowanie>,
     peer: PeerId,
     request: PromptRequest,
 ) -> Result<(PromptReply, u64), String> {
     let start = std::time::Instant::now();
-    let _ = swarm.behaviour_mut().prompt_rr.send_request(&peer, request);
+    let id = swarm.behaviour_mut().prompt_rr.send_request(&peer, request);
 
     let deadline = tokio::time::Instant::now() + TIMEOUT_ODPOWIEDZI;
     loop {
         let do_konca = tokio::time::timeout_at(deadline, swarm.select_next_some()).await;
         match do_konca {
-            Err(_) => return Err(format!("timeout {}s bez odpowiedzi", TIMEOUT_ODPOWIEDZI.as_secs())),
+            Err(_) => {
+                return Err(format!(
+                    "timeout: node {peer} nie odpowiedział w {}s",
+                    TIMEOUT_ODPOWIEDZI.as_secs()
+                ))
+            }
             Ok(SwarmEvent::Behaviour(ZachowanieEvent::PromptRr(RrEvent::Message {
-                message: RrMessage::Response { response, .. },
+                message: RrMessage::Response { request_id, response },
                 ..
-            }))) => {
+            }))) if request_id == id => {
                 return Ok((response, start.elapsed().as_millis() as u64));
+            }
+            // Zerwane połączenie, odmowa protokołu, timeout libp2p: bez tej gałęzi
+            // agent czekał w ciszy do własnego timeoutu (zmierzone 2026-10-11).
+            Ok(SwarmEvent::Behaviour(ZachowanieEvent::PromptRr(RrEvent::OutboundFailure {
+                request_id,
+                error,
+                ..
+            }))) if request_id == id => {
+                return Err(format!(
+                    "prompt nie dotarł do node'a {peer} albo odpowiedź nie wróciła: {error}"
+                ));
             }
             Ok(SwarmEvent::ConnectionEstablished { peer_id, .. }) => {
                 eprintln!("[agent] połączony: {peer_id}");
@@ -683,6 +699,7 @@ mod tests {
             model_hash: None,
             prompt: None,
             max_tokens: 128,
+            max_jobs: 1,
             fee: 1,
             key: None,
             file: None,

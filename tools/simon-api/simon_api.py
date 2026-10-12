@@ -54,25 +54,14 @@ def log_job(model, r):
         f.write(line)
 
 
-_node_locks = {}
-
-
-def node_lock(node):
-    # ponytail: one job at a time per node. The node handles one prompt at a time and, measured
-    # 2026-10-11, drops prompts that arrive while it is busy (the agent then waits with no reply).
-    # Queue here instead; drop this when the node accepts concurrent jobs.
-    return _node_locks.setdefault(node["bootstrap"], threading.Lock())
-
-
 def run_job(node, prompt, max_tokens):
     # ponytail: one process per request (~1 s libp2p setup each); a long-lived agent if throughput matters.
     # Note: --prompt is visible in `ps` to other local users; the agent has no stdin mode yet.
     cmd = [BIN, "--role", "agent", "--bootstrap", node["bootstrap"], "--model-hash", node["model_hash"],
            "--prompt", prompt, "--max-tokens", str(max_tokens), "--identity-file", IDENTITY, "--json"]
-    with node_lock(node):
-        t0 = time.time()
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S)
-        job_ms = int((time.time() - t0) * 1000)  # excludes time spent queued for the node
+    t0 = time.time()
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S)
+    job_ms = int((time.time() - t0) * 1000)  # includes time queued on the node (node --max-jobs)
     # --json should print one JSON object, but the CLI also prints a log line first: take the JSON line.
     js = next((l for l in reversed(p.stdout.splitlines()) if l.startswith("{")), None)
     if p.returncode != 0 or js is None:
@@ -125,6 +114,9 @@ class Handler(BaseHTTPRequestHandler):
         except subprocess.TimeoutExpired:
             return self._err(504, "SIMON job timed out")
         except Exception as e:  # node unreachable, verification failure, etc.
+            if "node_zajety" in str(e):  # node queue full: the client should retry, not give up
+                return self._send(503, {"error": {"message": f"SIMON node busy: {e}", "type": "simon_busy"}},
+                                  headers=[("Retry-After", "5")])
             return self._err(502, f"SIMON job failed: {e}")
         if not r.get("receipt_zweryfikowany"):
             return self._err(502, "receipt did not verify — answer withheld")

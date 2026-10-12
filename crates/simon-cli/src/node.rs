@@ -11,7 +11,9 @@ use libp2p::swarm::SwarmEvent;
 use simon_core::crypto::Keypair;
 use simon_core::receipt::{Precision, Receipt};
 use simon_harness::request_response::{PromptError, PromptReply, PromptRequest, PromptResponse};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 
 /// Domniemany endpoint modelu (vLLM/Ollama, API OpenAI).
 const DOMYSLNY_MODEL_URL: &str = "http://127.0.0.1:18020";
@@ -133,10 +135,42 @@ pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
         }
     }
 
-    println!("[node] czekam na prompty (punk-punkt, /simon/prompt/1)...");
+    // Zadania liczymy POZA pętlą swarmu. Wcześniej `policz` był awaitowany
+    // tu, w pętli: przez cały czas generowania swarm nie był pollowany, więc
+    // połączenia, które przyszły w tym czasie, nie dostawały handlera, a ich
+    // prompty ginęły bez śladu (zmierzone 2026-10-11: 4 agenty, joby ~15 s,
+    // 2 prompty nigdy nie dotarły, agenci czekali do swojego timeoutu 300 s).
+    let sloty = Arc::new(Semaphore::new(opcje.max_jobs));
+    // ponytail: stała kolejka na slot; konfigurowalna, gdy ktoś zmierzy, że 4 to źle.
+    // Zadania w kolejce czekają w ramach `REQUEST_TIMEOUT` protokołu (300 s),
+    // więc głębsza kolejka i tak skończyłaby się timeoutem u klienta.
+    let przyjecia = Arc::new(Semaphore::new(opcje.max_jobs * KOLEJKA_NA_SLOT));
+    let (gotowe_tx, mut gotowe_rx) = tokio::sync::mpsc::unbounded_channel();
+    let backend = Arc::new(Backend {
+        model_url,
+        model: model_deklarowany,
+        runtime,
+        klucz,
+        max_ctx,
+    });
+
+    println!(
+        "[node] czekam na prompty (punk-punkt, /simon/prompt/1), max_jobs={} kolejka={}...",
+        opcje.max_jobs,
+        opcje.max_jobs * KOLEJKA_NA_SLOT
+    );
 
     loop {
-        match swarm.select_next_some().await {
+        let zdarzenie = tokio::select! {
+            Some((channel, reply)) = gotowe_rx.recv() => {
+                if let Err(e) = swarm.behaviour_mut().prompt_rr.send_response(channel, reply) {
+                    eprintln!("[node] nie mogę odesłać odpowiedzi (klient się rozłączył?): {e:?}");
+                }
+                continue;
+            }
+            z = swarm.select_next_some() => z,
+        };
+        match zdarzenie {
             SwarmEvent::Behaviour(ZachowanieEvent::PromptRr(RrEvent::Message {
                 peer,
                 message,
@@ -152,62 +186,27 @@ pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
                         request.prompt.len(),
                         request.max_ctx
                     );
-                    // C+1: agent deklaruje max_ctx przybliżeniem znakowym (~3,5 B/tok
-                    // dla polskiej prozy) — przy JSON/base64 błąd sięga ~2,5× w obie
-                    // strony (docs/KV-CACHE-spill-i-rozproszony-VRAM.md). Node MA
-                    // prompt i vLLM pod ręką, więc pyta o prawdziwą liczbę tokenów
-                    // zamiast ufać cudzemu szacunkowi. Gdy /tokenize nieosiągalny —
-                    // spadamy na deklarację agenta (lepiej przepuścić niż zablokować
-                    // wszystko przez chwilową awarię wywołania).
-                    let realny_ctx = odczytaj_realny_ctx(&model_url, &request.prompt).await;
-                    let ctx_do_bramki = match realny_ctx {
-                        Some(realny) => {
-                            if realny != request.max_ctx {
-                                println!(
-                                    "[node] /tokenize: {realny} tok. realnie vs {} deklarowane (błąd {:+.0}%)",
-                                    request.max_ctx,
-                                    (realny as f64 - request.max_ctx as f64)
-                                        / request.max_ctx.max(1) as f64
-                                        * 100.0
-                                );
-                            }
-                            realny
-                        }
-                        None => {
-                            eprintln!(
-                                "[node] UWAGA: /tokenize nieosiągalny, wracam do deklaracji agenta ({} tok. wg znaków)",
-                                request.max_ctx
-                            );
-                            request.max_ctx
-                        }
-                    };
-                    // C: bramka limitu kontekstu. Za długie zlecenie odrzucamy
-                    // KONTROLOWANYM błędem, zamiast pozwolić vLLM się wywalić.
-                    let reply = if max_ctx > 0 && ctx_do_bramki > max_ctx {
-                        eprintln!(
-                            "[node] ODRZUCAM: zlecenie żąda {} tokenów ctx, mam limit {}",
-                            ctx_do_bramki, max_ctx
-                        );
-                        blad_ctx(
+                    // Pozwolenie na przyjęcie żyje do końca zadania (także przy
+                    // panice), więc licznik nie przecieka.
+                    let Ok(przyjete) = przyjecia.clone().try_acquire_owned() else {
+                        let reply = blad(
                             &request,
-                            "ctx_ponad_limit",
+                            "node_zajety",
                             &format!(
-                                "zlecenie żąda {} tokenów kontekstu, ten node ma limit {} (model {})",
-                                ctx_do_bramki, max_ctx, model_deklarowany
+                                "node zajęty: {} zadań w toku lub w kolejce — spróbuj później",
+                                opcje.max_jobs * KOLEJKA_NA_SLOT
                             ),
-                            Some(ctx_do_bramki),
-                            Some(max_ctx),
-                        )
-                    } else {
-                        policz(&model_url, &model_deklarowany, &runtime, &klucz, &request).await
+                        );
+                        let _ = swarm.behaviour_mut().prompt_rr.send_response(channel, reply);
+                        continue;
                     };
-                    if let Err(e) = swarm
-                        .behaviour_mut()
-                        .prompt_rr
-                        .send_response(channel, reply)
-                    {
-                        eprintln!("[node] nie mogę odesłać odpowiedzi: {e:?}");
-                    }
+                    let (b, sloty, tx) = (backend.clone(), sloty.clone(), gotowe_tx.clone());
+                    tokio::spawn(async move {
+                        let _przyjete = przyjete;
+                        let _slot = sloty.acquire_owned().await.expect("semafor nigdy nie jest zamykany");
+                        let reply = obsluz(&b, &request).await;
+                        let _ = tx.send((channel, reply));
+                    });
                 }
                 RrMessage::Response { .. } => {}
             },
@@ -222,6 +221,73 @@ pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
             }
             _ => {}
         }
+    }
+}
+
+/// Ile zadań może czekać w kolejce na jeden slot `--max-jobs`, zanim node
+/// odpowie `node_zajety`.
+const KOLEJKA_NA_SLOT: usize = 4;
+
+/// Co zadanie musi wiedzieć o backendzie — współdzielone między zadaniami.
+struct Backend {
+    model_url: String,
+    model: String,
+    runtime: String,
+    klucz: Keypair,
+    max_ctx: u32,
+}
+
+/// Jedno zlecenie: bramka kontekstu, potem liczenie. Biegnie w osobnym
+/// zadaniu tokio, nigdy w pętli swarmu.
+async fn obsluz(b: &Backend, request: &PromptRequest) -> PromptReply {
+    // C+1: agent deklaruje max_ctx przybliżeniem znakowym (~3,5 B/tok
+    // dla polskiej prozy) — przy JSON/base64 błąd sięga ~2,5× w obie
+    // strony (docs/KV-CACHE-spill-i-rozproszony-VRAM.md). Node MA
+    // prompt i vLLM pod ręką, więc pyta o prawdziwą liczbę tokenów
+    // zamiast ufać cudzemu szacunkowi. Gdy /tokenize nieosiągalny —
+    // spadamy na deklarację agenta (lepiej przepuścić niż zablokować
+    // wszystko przez chwilową awarię wywołania).
+    let realny_ctx = odczytaj_realny_ctx(&b.model_url, &request.prompt).await;
+    let ctx_do_bramki = match realny_ctx {
+        Some(realny) => {
+            if realny != request.max_ctx {
+                println!(
+                    "[node] /tokenize: {realny} tok. realnie vs {} deklarowane (błąd {:+.0}%)",
+                    request.max_ctx,
+                    (realny as f64 - request.max_ctx as f64)
+                        / request.max_ctx.max(1) as f64
+                        * 100.0
+                );
+            }
+            realny
+        }
+        None => {
+            eprintln!(
+                "[node] UWAGA: /tokenize nieosiągalny, wracam do deklaracji agenta ({} tok. wg znaków)",
+                request.max_ctx
+            );
+            request.max_ctx
+        }
+    };
+    // C: bramka limitu kontekstu. Za długie zlecenie odrzucamy
+    // KONTROLOWANYM błędem, zamiast pozwolić vLLM się wywalić.
+    if b.max_ctx > 0 && ctx_do_bramki > b.max_ctx {
+        eprintln!(
+            "[node] ODRZUCAM: zlecenie żąda {} tokenów ctx, mam limit {}",
+            ctx_do_bramki, b.max_ctx
+        );
+        blad_ctx(
+            request,
+            "ctx_ponad_limit",
+            &format!(
+                "zlecenie żąda {} tokenów kontekstu, ten node ma limit {} (model {})",
+                ctx_do_bramki, b.max_ctx, b.model
+            ),
+            Some(ctx_do_bramki),
+            Some(b.max_ctx),
+        )
+    } else {
+        policz(&b.model_url, &b.model, &b.runtime, &b.klucz, request).await
     }
 }
 
@@ -650,5 +716,99 @@ mod testy_wyboru_modelu {
     fn kilka_modeli_bez_wskazania_to_zgadywanie_wiec_nic() {
         let (id, _) = wybierz_wpis(&lista(), None);
         assert!(id.is_none(), "przy kilku modelach wybór data[0] był źródłem błędu");
+    }
+}
+
+#[cfg(test)]
+mod testy_wspolbieznosci {
+    use crate::wspolne::{klucz_p2p_z_seeda, zbuduj_swarm};
+    use simon_harness::request_response::{PromptReply, PromptRequest};
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const OPOZNIENIE: Duration = Duration::from_secs(2);
+
+    /// Udawany backend: każde `chat/completions` trwa `OPOZNIENIE`, reszta
+    /// (/v1/models, /tokenize, /version) odpowiada od razu.
+    async fn falszywy_backend() -> u16 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = l.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    if String::from_utf8_lossy(&buf[..n]).contains("chat/completions") {
+                        tokio::time::sleep(OPOZNIENIE).await;
+                    }
+                    let body = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"completion_tokens":1,"prompt_tokens":1}}"#;
+                    let odp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = s.write_all(odp.as_bytes()).await;
+                });
+            }
+        });
+        port
+    }
+
+    /// Regresja 2026-10-11: node liczył prompt W pętli swarmu, więc N
+    /// równoległych agentów było obsługiwanych po kolei (a przy dłuższych
+    /// jobach część promptów ginęła). Przy `--max-jobs 4` cztery prompty
+    /// mają się liczyć naraz: ~1× opóźnienie backendu, nie 4×.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cztery_prompty_licza_sie_naraz() {
+        let backend = falszywy_backend().await;
+        let wolny = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = wolny.local_addr().unwrap().port();
+        drop(wolny);
+        let seed = [7u8; 32];
+        let peer = klucz_p2p_z_seeda(&seed).public().to_peer_id();
+        let args: Vec<String> = [
+            "--role", "node",
+            "--listen", &format!("/ip4/127.0.0.1/tcp/{port}"),
+            "--model-url", &format!("http://127.0.0.1:{backend}"),
+            "--key", &hex::encode(seed),
+            "--max-jobs", "4",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let opcje = crate::Opcje::parse(&args).unwrap();
+        tokio::spawn(async move { super::uruchom(&opcje).await });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let adres = format!("/ip4/127.0.0.1/tcp/{port}/p2p/{peer}");
+        let start = Instant::now();
+        let agenci: Vec<_> = (0..4)
+            .map(|i| {
+                let adres = adres.clone();
+                tokio::spawn(async move {
+                    let mut swarm = zbuduj_swarm(&[], &[adres], None).unwrap();
+                    let req = PromptRequest {
+                        v: 1,
+                        order_id: format!("o{i}"),
+                        job_id: format!("j{i}"),
+                        model_hash: "m".into(),
+                        prompt: "hej".into(),
+                        max_tokens: 1,
+                        max_ctx: 1,
+                        nonce: "n".into(),
+                    };
+                    crate::agent::wyslij_i_czekaj(&mut swarm, peer, req).await
+                })
+            })
+            .collect();
+        for a in agenci {
+            let (reply, _) = a.await.unwrap().expect("agent dostał odpowiedź");
+            assert!(matches!(reply, PromptReply::Ok(_)), "{reply:?}");
+        }
+        let czas = start.elapsed();
+        assert!(
+            czas < OPOZNIENIE * 3,
+            "4 prompty trwały {czas:?} — liczone po kolei, nie naraz"
+        );
     }
 }

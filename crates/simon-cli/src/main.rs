@@ -29,6 +29,11 @@ OPCJE:
     --listen <multiaddr>     nasłuch, np. /ip4/0.0.0.0/tcp/9001
     --bootstrap <multiaddr>  peer startowy (inny niż własny adres)
     --model-url <url>        [node] endpoint vLLM, np. http://127.0.0.1:18020
+    --max-jobs <n>           [node] ile promptów liczyć naraz (domyślnie 1;
+                             ustaw na liczbę slotów backendu, np. -np
+                             llama-server). Nadmiar czeka w kolejce
+                             (4 na slot), ponad nią node odpowiada
+                             błędem `node_zajety`
     --model-hash <hash>      [node] deklarowany model / [agent] model, o który prosisz
     --prompt <tekst>         [agent] prompt do policzenia; w trybie --file
                              to PYTANIE/instrukcja stosowana do każdego kawałka
@@ -130,6 +135,8 @@ pub struct Opcje {
     pub model_hash: Option<String>,
     pub prompt: Option<String>,
     pub max_tokens: u32,
+    /// Ile promptów node liczy równocześnie (sloty backendu).
+    pub max_jobs: usize,
     pub fee: u64,
     /// M2.5.1: trwały klucz node'a (hex, 32 B seed). Bez tego node losuje
     /// klucz przy każdym starcie i klient nie ma stałej tożsamości do weryfikacji.
@@ -184,6 +191,7 @@ impl Opcje {
         let mut model_hash = None;
         let mut prompt = None;
         let mut max_tokens = 128u32;
+        let mut max_jobs = 1usize;
         let mut fee = 1u64;
         let mut key = None;
         let mut file = None;
@@ -231,6 +239,13 @@ impl Opcje {
                 "--max-tokens" => {
                     let v = wartosc(&mut i, "--max-tokens")?;
                     max_tokens = v.parse().map_err(|_| format!("zły --max-tokens: {v}"))?;
+                }
+                "--max-jobs" => {
+                    let v = wartosc(&mut i, "--max-jobs")?;
+                    max_jobs = v.parse().map_err(|_| format!("zły --max-jobs: {v}"))?;
+                    if max_jobs == 0 {
+                        return Err("--max-jobs musi być > 0".to_string());
+                    }
                 }
                 "--fee" => {
                     let v = wartosc(&mut i, "--fee")?;
@@ -281,6 +296,7 @@ impl Opcje {
             model_hash,
             prompt,
             max_tokens,
+            max_jobs,
             fee,
             key,
             file,
