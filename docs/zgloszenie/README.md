@@ -6,10 +6,10 @@ wideo **MP4**, publiczne repo GitHub, URL działającej aplikacji.
 | Element | Plik / adres | Stan |
 |---|---|---|
 | Okładka 16:9 | `okladka-1920x1080.png` (źródło: `okladka.svg`) | gotowe |
-| Slajdy | `SIMON-slajdy.pdf` (10 stron, 1440×810 pt = 16:9); źródła w `slajdy/` | gotowe |
+| Slajdy | `SIMON-slajdy.pdf` (11 stron, 1440×810 pt = 16:9); źródła w `slajdy/` | gotowe |
 | Repo | `github.com/Szpili/SIMON` | gotowe, MIT |
 | Demo pod URL-em | Tailscale Funnel, usługi pod systemd | działa |
-| Wideo MP4 | — | **brak** — ma sens dopiero z wynikiem ROCm |
+| Wideo MP4 | `wideo/SIMON-wideo.mp4` (1:35, 1920×1080, bez narracji) — składane `wideo/zloz.sh` z: slajdu AMD, nagrania demo na MI300X (2026-10-11), slajdu z narzutem SIMON (2026-10-13), żywej strony `/network`, slajdu statusu | gotowe; ujęcia z przeglądarki i narracja ze scenariusza — do dogrania |
 
 ## Slajdy
 

@@ -138,6 +138,25 @@
   <p style="font-size:30px; line-height:1.4; width:1600px">We publish the result as measured, including the FAIL.</p>
   <aside>Why AMD: the cross-vendor question needs their hardware. Raw data and versions are in docs/amd-data. Full write-up: docs/AMD-MI300X-RESULTS.md.</aside>
 </section>
+<section id="layer" data-transition="fade" style="background:#F5F4F1; color:#151B2D; font-family:'Fira Sans', Verdana, sans-serif; padding:128px 128px 160px; display:flex; flex-direction:column; gap:28px">
+  <p style="font-size:24px; font-weight:700; letter-spacing:4px; color:#B08428">MEASURED ON THE MI300X · 2026-10-13</p>
+  <h2 style="font-size:72px; font-weight:700; line-height:1.1">SIMON adds no measurable cost</h2>
+  <p style="font-size:32px; color:#4A5568; width:1600px">We sent the same jobs to vLLM directly and through a SIMON node. The client verified every receipt.</p>
+  <table style="font-size:30px; width:1664px; border-collapse:collapse">
+    <tr>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">Concurrent streams</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">vLLM direct</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">Through SIMON</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">Receipts verified</th>
+    </tr>
+    <tr><td style="padding:10px 24px; color:#4A5568">1</td><td style="padding:10px 24px; color:#4A5568">65 tok/s</td><td style="padding:10px 24px; color:#4A5568">65 tok/s</td><td style="padding:10px 24px; font-weight:700; color:#3E7A2E">6 of 6</td></tr>
+    <tr><td style="padding:10px 24px; color:#4A5568">4</td><td style="padding:10px 24px; color:#4A5568">220 tok/s</td><td style="padding:10px 24px; color:#4A5568">220 tok/s</td><td style="padding:10px 24px; font-weight:700; color:#3E7A2E">24 of 24</td></tr>
+    <tr><td style="padding:10px 24px; color:#4A5568">16</td><td style="padding:10px 24px; color:#4A5568">712 tok/s</td><td style="padding:10px 24px; color:#4A5568">722 tok/s</td><td style="padding:10px 24px; font-weight:700; color:#3E7A2E">96 of 96</td></tr>
+    <tr><td style="padding:10px 24px; color:#151B2D; font-weight:700">64</td><td style="padding:10px 24px; color:#151B2D; font-weight:700">1948 tok/s</td><td style="padding:10px 24px; color:#151B2D; font-weight:700">2020 tok/s</td><td style="padding:10px 24px; font-weight:700; color:#3E7A2E">384 of 384</td></tr>
+  </table>
+  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#6A7179; width:1664px">Qwen3.8-27B BF16, vLLM 0.27.1, 256 tokens per job. One job takes about 14 ms more. The client ran on the same host, so the WAN is not in these numbers.</p>
+  <aside>Until 12 October a SIMON node ran one prompt at a time, and it lost some parallel prompts. Now the node runs jobs concurrently, with a limit and an explicit busy error. At 16 and 64 streams the SIMON rows are a little higher. We do not claim a speed-up: each job is a separate agent process, so the requests arrive spread out, and the direct client sends them in waves. Read it as no measurable overhead. Raw data: docs/amd-data/simon-amd-overhead-2026-10-13.jsonl.</aside>
+</section>
 <section id="honesty" data-transition="fade" style="background:#F5F4F1; color:#151B2D; font-family:'Fira Sans', Verdana, sans-serif; padding:112px 128px; display:flex; flex-direction:column; gap:30px">
   <h2 style="font-size:64px; font-weight:700; line-height:1.1">Three of our own claims, withdrawn in public</h2>
   <div style="display:flex; flex-direction:column; gap:14px; width:1664px">
@@ -169,18 +188,19 @@
   <h2 style="font-size:72px; font-weight:700; line-height:1.1">Status, without rounding up</h2>
   <table style="font-size:32px; width:1664px; border-collapse:collapse">
     <tr>
-      <th style="text-align:left; padding:16px 24px; border-bottom:2px solid #D9A441; font-weight:700">Capability</th>
-      <th style="text-align:left; padding:16px 24px; border-bottom:2px solid #D9A441; font-weight:700">State</th>
+      <th style="text-align:left; padding:11px 24px; border-bottom:2px solid #D9A441; font-weight:700">Capability</th>
+      <th style="text-align:left; padding:11px 24px; border-bottom:2px solid #D9A441; font-weight:700">State</th>
     </tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Output binding</td><td style="padding:16px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Offline receipt verification by a third party</td><td style="padding:16px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Chunking, map-reduce, agent-to-agent chaining</td><td style="padding:16px 24px; color:#7FB069; font-weight:700">working</td></tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Token counts recomputed independently</td><td style="padding:16px 24px; color:#D9A441; font-weight:700">partial: backends expose no token ids</td></tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Execution correctness (TopLoc-style audit)</td><td style="padding:16px 24px; color:#E08B8B; font-weight:700">not implemented</td></tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Automatic slashing</td><td style="padding:16px 24px; color:#E08B8B; font-weight:700">off by decision: no defensible threshold</td></tr>
-    <tr><td style="padding:16px 24px; color:#B9BEC9">Wash-compute resistance</td><td style="padding:16px 24px; color:#E08B8B; font-weight:700">unsolved</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Output binding</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Offline receipt verification by a third party</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Chunking, map-reduce, agent-to-agent chaining</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">working</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Concurrent jobs on one node, with a busy limit</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">working, measured on MI300X</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Token counts recomputed independently</td><td style="padding:11px 24px; color:#D9A441; font-weight:700">partial: backends expose no token ids</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Execution correctness (TopLoc-style audit)</td><td style="padding:11px 24px; color:#E08B8B; font-weight:700">not implemented</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Automatic slashing</td><td style="padding:11px 24px; color:#E08B8B; font-weight:700">off by decision: no defensible threshold</td></tr>
+    <tr><td style="padding:11px 24px; color:#B9BEC9">Wash-compute resistance</td><td style="padding:11px 24px; color:#E08B8B; font-weight:700">unsolved</td></tr>
   </table>
-  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#8A8F9C; width:1664px">129 tests green · CI on every push, with a guard against constants that pose as measurements</p>
+  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#8A8F9C; width:1664px">189 tests green · CI on every push, with a guard against constants that pose as measurements</p>
   <aside>A fingerprint mismatch triggers a re-audit, not punishment. We will not ship a threshold that we cannot defend. The ledger records work, never a balance, because verified work is not the same as independent demand. The words double the color here, so the table still reads without it.</aside>
 </section>
 <section id="close" data-transition="fade" style="background:#151B2D; color:#F5F4F1; font-family:'Fira Sans', Verdana, sans-serif; padding:128px; display:flex; flex-direction:column; justify-content:center; gap:44px">
