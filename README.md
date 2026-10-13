@@ -129,6 +129,8 @@ We measured it on ROCm rather than speculate about it (AMD Developer Cloud, 1× 
   gateway from Poland. Receipts verify, and a single changed byte is rejected.
 - **Capacity:** one MI300X sustained **64 concurrent streams** of Qwen3.8-27B (BF16, vLLM). All 192
   requests stayed within TTFT ≤ 3 s and ≥ 10 tok/s per stream, at ~2000 tok/s in total.
+- **SIMON layer cost:** the same 64 streams sent through a SIMON node ran at the same ~2000 tok/s. All 510
+  jobs (1–64 streams) came back with a verified receipt; one job costs ~14 ms more than vLLM alone.
 - **Routing, not sharding:** splitting one model across a MI300X and a 3090 over the internet ran 12×
   slower, and remote MoE experts 55× slower. Separate whole-model nodes gave lower latency, not more
   throughput. SIMON therefore routes whole jobs and splits a model only when it does not fit.

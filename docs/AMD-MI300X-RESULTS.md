@@ -125,10 +125,54 @@ comparison: the precision and server settings differ.
 - The cap at 64 is our `--max-num-seqs` setting, not the latency limits; higher concurrency was not measured.
 - llama.cpp in this configuration scales poorly with concurrency. That was not debugged, so capacity claims rest on the vLLM column.
 
+## 6. What the SIMON layer costs at 1–64 streams (2026-10-13)
+
+Until 2026-10-12 a SIMON node ran one prompt at a time, so section 5 was measured against vLLM directly. With
+`--max-jobs` (commit `83b7c53`) the node runs jobs concurrently, so we measured the same jobs both ways on a
+fresh droplet.
+
+- **Setup:**
+  - 1× MI300X, vLLM 0.27.1 (`0.27.1+rocm723`), Qwen3.8-27B BF16, `--max-num-seqs 64`.
+  - SIMON node on the droplet host, `--max-jobs 64`. Client on the same host, so the WAN is not in this number.
+  - Each job is a non-streaming chat completion, 256 output tokens, a unique prefix per request.
+  - "Through SIMON" means one `simon --role agent --json` process per job: libp2p dial, node admission,
+    Ed25519-signed receipt, receipt verified by the client.
+  - Closed loop, the two paths interleaved, every row run twice. The first request after vLLM start (5.9 s, cold) was
+    discarded and a warm-up run done before measuring.
+- **Result:**
+
+  | streams | path | jobs ok | receipts verified | total tok/s | latency p50 | latency p95 |
+  |---|---|---|---|---|---|---|
+  | 1 | vLLM direct | 6/6 | – | 65 | 3.92 s | 3.92–3.94 s |
+  | 1 | through SIMON | 6/6 | 6/6 | 65 | 3.93–3.94 s | 3.93–3.94 s |
+  | 4 | vLLM direct | 24/24 | – | 219–220 | 4.64–4.65 s | 4.69–4.72 s |
+  | 4 | through SIMON | 24/24 | 24/24 | 220 | 4.64–4.65 s | 4.66 s |
+  | 16 | vLLM direct | 96/96 | – | 711–712 | 5.68 s | 5.92–5.93 s |
+  | 16 | through SIMON | 96/96 | 96/96 | 721–722 | 5.66–5.69 s | 5.69–5.70 s |
+  | 64 | vLLM direct | 384/384 | – | 1948 | 8.15–8.16 s | 9.05–9.10 s |
+  | 64 | through SIMON | 384/384 | 384/384 | 2019–2020 | 8.10 s | 8.18 s |
+
+> Through SIMON, one MI300X served **64 concurrent streams at ~2000 tok/s**. All 510 jobs completed with a verified
+> receipt, at no measurable throughput cost against vLLM alone. A single job costs ~14 ms more (3.93 vs 3.92 s).
+
+**Caveats:**
+- At 16 and 64 streams the SIMON rows are slightly *better*. We do not claim SIMON makes vLLM faster. Each agent is
+  a separate process, so requests arrive staggered by tens of milliseconds, while the direct client sends them in
+  waves. Read the difference as "no measurable overhead", not as a gain.
+- Client, node and GPU shared one host. The WAN round trip (~124 ms to Poland) is not included.
+- Proof level 0: a verified receipt shows which key signed which output. It does not show which model ran.
+- **Raw data:** `docs/amd-data/simon-amd-overhead-2026-10-13.jsonl`.
+- **Client:** `tools/simon-bench/overhead.py`.
+- **Versions:** `docs/amd-data/droplet-versions-2026-10-13.txt`.
+- **Cost:** ~19 minutes of one MI300X, about $0.65 of credit.
+
 ## Pitfalls worth knowing
 
 - **The vLLM Quick Start image publishes container port 8000 on all interfaces.** A scanner found it within
-  minutes. Block it before starting vLLM: `iptables -I DOCKER-USER -i eth0 -p tcp --dport 8000 -j DROP`.
+  minutes. Block it before starting vLLM: `iptables -I DOCKER-USER -i eth0 -p tcp --dport 8000 -j DROP`, and the
+  same with `ip6tables` (docker-proxy also listens on `[::]:8000`).
+- **The image rate-limits SSH (`ufw limit 22/tcp`).** Many short `ssh`/`scp` connections in a row get
+  "connection refused" for about 30 s. Reuse one connection or copy several files in one command.
 - **Qwen3.8 on vLLM** needs `--reasoning-parser qwen3`, or the thinking ends up in the answer.
   - The model is a hybrid (Mamba layers), so vLLM also needs `--max-num-seqs` below the number of Mamba cache blocks.
 - **Qwen3.8 on llama-server:** `--reasoning-budget 0` does not stop thinking; `--chat-template-kwargs '{"enable_thinking":false}'` does.

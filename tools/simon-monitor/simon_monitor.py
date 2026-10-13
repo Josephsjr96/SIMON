@@ -102,7 +102,7 @@ class State:
         ms = j.get("job_ms") or 0
         ct = j.get("completion_tokens") or 0
         j["node_label"] = self.nodes[idx]["label"] if idx is not None else None
-        j["tok_s"] = round(ct / (ms / 1000), 1) if ms else None  # gateway-timed job: includes libp2p setup, not queueing
+        j["tok_s"] = round(ct / (ms / 1000), 1) if ms else None  # gateway-timed job: includes libp2p setup and time queued on the node
         self.jobs.appendleft(j)
         self.totals["jobs"] += 1
         self.totals["completion_tokens"] += ct

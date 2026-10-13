@@ -101,7 +101,7 @@
             <p class="mt-3 mono text-xs text-neutral-500">{n.telemetry === 'remote' ? 'no GPU telemetry for this node (remote)' : 'GPU telemetry unavailable (nvidia-smi gave no data)'}</p>
           {/if}
           <div class="mt-4">
-            <p class="mono text-xs text-neutral-500">tok/s per job (timed by the gateway; includes job setup, not queueing)</p>
+            <p class="mono text-xs text-neutral-500">tok/s per job (timed by the gateway; includes job setup and time queued on the node)</p>
             <Sparkline values={n.history.tok_s} />
           </div>
         </article>
