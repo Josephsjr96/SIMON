@@ -35,6 +35,28 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      - name: Test offline receipt demo
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # The public quickstart must accept the bundled receipt and reject a one-byte change.
+          ./target/release/simon --verify-receipt przyklady/receipt.json \\
+                                 --expect-output przyklady/odpowiedz.txt
+
+          cp przyklady/odpowiedz.txt "$RUNNER_TEMP/simon-tampered-output.txt"
+          printf ' ' >> "$RUNNER_TEMP/simon-tampered-output.txt"
+          set +e
+          ./target/release/simon --verify-receipt przyklady/receipt.json \\
+                                 --expect-output "$RUNNER_TEMP/simon-tampered-output.txt" \\
+                                 > "$RUNNER_TEMP/simon-tamper-check.log" 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            cat "$RUNNER_TEMP/simon-tamper-check.log"
+            echo "Expected tampered receipt verification to exit 1; got $status" >&2
+            exit 1
+          fi
+
       - name: Testy
         run: cargo test --release --locked
 
