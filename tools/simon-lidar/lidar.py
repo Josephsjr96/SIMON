@@ -301,7 +301,9 @@ def main():
     for fp in fps:
         fp["features"] = features(fp)  # recompute: feature code may have changed since collection
     if a.cmd == "eval":
-        res = loo(fps)
+        res = [(lab, sc) for lab, sc in loo(fps) if sc]
+        if not res:
+            sys.exit("eval needs at least 2 fingerprints")
         labels = sorted({l for l, _ in res})
         conf = {l: collections.Counter() for l in labels}
         for lab, sc in res:
