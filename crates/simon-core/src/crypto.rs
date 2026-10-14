@@ -64,7 +64,7 @@ impl PublicKey {
         let raw = hex::decode(s).map_err(|e| SimonError::Crypto(e.to_string()))?;
         let arr: [u8; 32] = raw
             .try_into()
-            .map_err(|_| SimonError::Crypto("klucz publiczny musi mieć 32 bajty".into()))?;
+            .map_err(|_| SimonError::Crypto("public key must be 32 bytes".into()))?;
         Ok(PublicKey(arr))
     }
 
@@ -90,7 +90,7 @@ mod hex_bytes {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
         let s = String::deserialize(d)?;
         let raw = hex::decode(s).map_err(serde::de::Error::custom)?;
-        raw.try_into().map_err(|_| serde::de::Error::custom("oczekiwano 32 bajtów"))
+        raw.try_into().map_err(|_| serde::de::Error::custom("expected 32 bytes"))
     }
 }
 
@@ -104,7 +104,7 @@ mod hex_bytes64 {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
         let s = String::deserialize(d)?;
         let raw = hex::decode(s).map_err(serde::de::Error::custom)?;
-        raw.try_into().map_err(|_| serde::de::Error::custom("oczekiwano 64 bajtów"))
+        raw.try_into().map_err(|_| serde::de::Error::custom("expected 64 bytes"))
     }
 }
 

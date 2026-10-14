@@ -118,7 +118,7 @@ pub fn ocena(kroki: &[Krok], p: &Polityka) -> Werdykt {
                     poza += 1;
                     if powod.is_none() {
                         powod = Some(format!(
-                            "krok {i} (idx {}): rank {rank} (k={}), margines {margin:.4} (max {:.4})",
+                            "step {i} (idx {}): rank {rank} (k={}), margin {margin:.4} (max {:.4})",
                             kr.indeks, p.k, p.max_margin
                         ));
                     }
@@ -129,7 +129,7 @@ pub fn ocena(kroki: &[Krok], p: &Polityka) -> Werdykt {
                 poza_lista += 1;
                 if powod.is_none() {
                     powod = Some(format!(
-                        "krok {i} (idx {}): token {} POZA top-{}",
+                        "step {i} (idx {}): token {} OUTSIDE top-{}",
                         kr.indeks, kr.node_token, p.k
                     ));
                 }
@@ -283,7 +283,7 @@ mod testy {
         let w = ocena(&kroki, &Polityka::default());
         assert!(!w.ok, "{w:?}");
         assert_eq!(w.poza_topk, 1);
-        assert!(w.powod.unwrap().contains("POZA top-2"));
+        assert!(w.powod.unwrap().contains("OUTSIDE top-2"));
     }
 
     #[test]

@@ -1,23 +1,35 @@
 # SIMON
 
-**Verifiable LLM inference on untrusted, heterogeneous hardware.**
+Verifiable LLM inference on untrusted, heterogeneous hardware.
 
-SIMON is a peer-to-peer harness that dispatches inference jobs to nodes nobody
-controls centrally, and then makes the result *checkable*: every job produces an
-Ed25519-signed receipt, and any verifier can re-run a single forward pass over
-`prompt + output` to audit what the node claimed it computed.
+SIMON is a peer-to-peer harness. It sends inference jobs to nodes that no one
+controls centrally, and it makes each result verifiable. Every job produces a
+receipt: a record that the node signs with Ed25519. Any verifier can audit a
+receipt. An audit is one forward pass over `prompt + output`, and it tests what
+the node claimed it computed.
 
-The hard question is not "can we distribute inference" — it is **"how do you
-punish a lying node without punishing an honest one?"** That is the question
-this repository is actually about, and most of the work here is measurement
-rather than architecture.
+The hard question is not "can we distribute inference". The hard question is
+"how do you punish a lying node without punishing an honest one?". This
+repository is about that question. Most of the work here is measurement, not
+architecture.
+
+Try it:
+
+- [Tamper, then verify](https://pop-os.tailaf1556.ts.net/simon/demo): change the
+  answer of a node and watch the receipt fail. The verifier runs in your browser.
+  It is the same Rust verifier as the CLI, compiled to WebAssembly.
+- [Network](https://pop-os.tailaf1556.ts.net/simon/network): live node cards and
+  the job feed. Your browser verifies the signature of every receipt. The page
+  shows data only while our demo node is up. It never shows sample data.
+- `przyklady/README.en.md`: verify a real receipt offline with one command.
 
 ---
 
 ## Status
 
-Working, measured, and openly incomplete. Nothing below is projected — every
-number was produced on our own machines and the raw data lives in the repo.
+The software works. We measured every number below on our own machines, and
+the raw data is in the repository. Nothing below is a projection. The table
+also names what is not done.
 
 | Component | State |
 |---|---|
@@ -26,52 +38,60 @@ number was produced on our own machines and the raw data lives in the repo.
 | Admission control (C+1 gate) with real tokenizer counts | working |
 | Chunking + hierarchical map-reduce for over-context jobs | working |
 | Agent↔agent orchestration (job B consumes job A's output) | working |
-| Slashing rules for dishonest nodes | **unresolved — see below** |
+| OpenAI-compatible API gateway (`tools/simon-api`): each completion is a real SIMON job with its receipt | working |
+| Network monitor (`/network` page + `tools/simon-monitor`) | working |
+| AMD ROCm node (MI300X) | working and measured (see below) |
+| Slashing rules for dishonest nodes | unresolved (see below) |
 
-Platforms proven end-to-end: **Linux (CUDA)** and **macOS on Intel x86_64**,
-including cross-platform interop between them.
+Platforms proven end to end: Linux (CUDA), Linux (ROCm, AMD Instinct MI300X),
+and macOS on Intel x86_64. Cross-platform interoperation between them is also
+proven.
 
-The Mac is a **2012 Core i7** — which is the point. On 18 September 2026 a
-receipt issued by an RTX 3090 was verified on that laptop: `RECEIPT VALID`,
-then `REJECTED` after one extra space was appended to the answer. No GPU, no
-network, no trust in whoever handed over the files. Reproduce it yourself with
-`examples/` below. Apple Silicon and big-endian targets remain unverified, and
-we do not claim them. `docs/PAZUR-macos-bringup.md` is the runbook (Polish).
+The Mac is a 2012 Core i7, and that is the point. On 18 September 2026 that
+laptop verified a receipt that an RTX 3090 issued. The result was
+`RECEIPT VALID`. Then we appended one space to the answer, and the result became
+`REJECTED`. The laptop needed no GPU, no network, and no trust in the person who
+handed over the files. You can reproduce it with `przyklady/README.en.md`. We
+did not test Apple Silicon or big-endian targets, and we do not claim them.
+`docs/PAZUR-macos-bringup.md` is the runbook (Polish).
 
-## What a receipt proves — and what it does not
+## What a receipt proves and what it does not
 
-Stating this precisely matters more than stating it favourably.
+A precise statement matters more than a favorable one.
 
-A receipt today proves exactly: **a registered node signed this exact answer as
-the result of this job.** The signature covers a commitment to the output text
-bound to the job id, so substituting the answer, tampering with it in transit,
-or pairing a valid receipt from another run with this text are all rejected.
+A receipt today proves exactly this: a registered node signed this exact answer
+as the result of this job. The signature covers a commitment to the output
+text, bound to the job id. Therefore the verifier rejects a substituted answer,
+an answer changed in transit, and a valid receipt from another run paired with
+this text.
 
-It does **not** prove that the declared model generated that answer. A malicious
-node can sign arbitrary text together with a correctly computed digest. Binding
-`model + prompt + execution + output` requires an execution audit (TopLoc), and
-that is not implemented.
+A receipt does not prove that the declared model generated the answer. A
+malicious node can sign arbitrary text together with a correctly computed
+digest. To bind `model + prompt + execution + output`, SIMON needs an execution
+audit (TopLoc). That audit is not implemented.
 
 | | |
 |---|---|
-| Output binding | implemented + tested |
+| Output binding | implemented and tested |
 | Token fields signed | implemented |
-| Token counts independently recomputed | partial — verify separately |
-| Execution correctness | **not implemented** |
-| Economic credit | **not implemented** |
-| Wash-compute resistance | **unsolved** |
+| Token counts independently recomputed | partial, recompute them separately |
+| Execution correctness | not implemented |
+| Economic credit | not implemented |
+| Wash-compute resistance | unsolved (see `docs/WASH-COMPUTE.md`) |
 
-The token counters are the node's signed *declaration*: the signature stops
-them being changed afterwards, it does not make them true. The same holds for
-the reported timings — only round-trip latency is measured independently, so
-**settlement must never rest on node-reported time**. `docs/SECURITY-LOG.en.md`
-records the previous behaviour of each fix, not just the fix.
+The token counters are the signed declaration of the node. The signature stops
+a later change of the counters. It does not make them true. The same holds for
+the reported timings. Only round-trip latency is measured independently.
+Therefore settlement must never rest on node-reported time.
+`docs/SECURITY-LOG.en.md` records the previous behavior of each fix, not only
+the fix.
 
 ## Measured results
 
-**Audit cost.** An audit is `prefill(N+M)`; the job itself is
-`prefill(N) + decode(M)`. Decoding is ~55× slower per token, so auditing is
-cheap:
+### Audit cost
+
+An audit is `prefill(N+M)`. The job itself is `prefill(N) + decode(M)`.
+Decoding is about 55 times slower per token, so an audit is cheap:
 
 | prompt | output | job | audit | audit as % of job |
 |---:|---:|---:|---:|---:|
@@ -80,39 +100,60 @@ cheap:
 | 2011 | 500 | 87.1 s | 2.07 s | 2.4% |
 | 6037 | 500 | 69.1 s | 5.12 s | 7.4% |
 
-**2.4–9.9% of the job, median 7.4%.** This is the number that decides whether
-verification can be paid for out of the job price. It can.
+The audit costs 2.4% to 9.9% of the job, median 7.4%. This number decides
+whether the job price can pay for the audit. It can.
 
-**Honest drift.** Before you can slash a node for a mismatched fingerprint, you
-must know how much two *honest* runs differ. We measured it. On identical
-hardware the token sequence was stable and logprob deltas were tiny — but we
-explicitly **withdrew** two stronger claims we had first drawn from that data,
-because the measurement could not support them (see
-`docs/design/DESIGN-VERIFIER-0.md`). A cross-hardware run came back
-bit-identical, which is a *confounded* negative result, not a green light.
+### Honest drift
 
-**Therefore: a fingerprint mismatch is currently treated as a reason to
-re-audit, not as proof of fraud.** Automatic slashing is not enabled, and we say
-so rather than shipping a threshold we cannot defend.
+A fingerprint is the numeric summary that an audit produces. Before you can
+slash a node for a mismatched fingerprint, you must know how much two honest
+runs differ. We measured it. On identical hardware the token sequence was
+stable, and the logprob (log-probability) deltas were tiny. We first drew two
+stronger claims from that data. We withdrew both in public, because the
+measurement did not support them (see `docs/design/DESIGN-VERIFIER-0.md`). A
+cross-hardware run came back bit-identical. That is a confounded negative
+result, not a green light.
+
+Therefore a fingerprint mismatch is today a reason to re-audit, not proof of
+fraud. Automatic slashing is off. We say so, because we will not ship a
+threshold that we cannot defend.
 
 ## Why this matters for AMD
 
-SIMON's entire value proposition is running on hardware that is *not* uniform —
-whatever GPU a volunteer happens to own. But our verification work so far has
-been proven on NVIDIA/CUDA and an Intel Mac only, for the mundane reason that
-those are the machines we have.
+The value of SIMON is that it runs on hardware that is not uniform: whatever
+GPU a volunteer owns. But until October 2026 we measured audits on NVIDIA/CUDA
+and on an Intel Mac only, for one reason: those were the machines we had.
 
-That is a real gap, and it is precisely where the interesting question lives:
-**numerical reproducibility across vendors.** If an honest AMD node and an
-honest NVIDIA node compute measurably different activations for the same input,
-then any naive fingerprint comparison slashes honest participants — and every
-cross-vendor decentralized inference network has this problem whether or not it
-has noticed yet.
+That gap is where the interesting question lives: numerical reproducibility
+across vendors. Suppose an honest AMD node and an honest NVIDIA node compute
+different activations for the same input. Then a naive fingerprint comparison
+slashes honest participants. Every cross-vendor decentralized
+inference network has this problem, whether it noticed or not.
 
-We intend to measure it on ROCm rather than speculate about it. The node backend
-talks to an OpenAI-compatible endpoint, so a ROCm-served model is a
-configuration change, not a rewrite. What has not run yet is the ROCm arm of the
-comparison itself — that is the next measurement, on AMD Developer Cloud.
+We measured it on ROCm instead of speculation (AMD Developer Cloud, 1× MI300X,
+2026-10-11). The full write-up and the raw data are in
+`docs/AMD-MI300X-RESULTS.md`.
+
+- Cross-vendor false positives: in the pre-registered test, an honest MI300X
+  flagged 5 of 32 prompts. The NVIDIA reference flagged the same 5 when we
+  tested it against itself. The MI300X output was byte-identical on 22 of 32
+  prompts. The vendor adds no false positives for this model and this metric.
+  The noise comes from the audit method itself.
+- SIMON node on AMD: Qwen3.8-27B on the MI300X, reached from Poland through the
+  OpenAI-compatible gateway. The receipts verify, and a single changed byte is
+  rejected.
+- Capacity: one MI300X sustained 64 concurrent streams of Qwen3.8-27B (BF16,
+  vLLM). All 192 requests had a time to first token (TTFT) of 3 s or less.
+  Each stream ran at 10 tok/s or more, about 2000 tok/s in total.
+- SIMON layer cost: on 2026-10-13 we sent the same jobs to vLLM directly and
+  through a SIMON node on one MI300X. At 64 concurrent streams both paths ran
+  at about 2000 tok/s. All 510 jobs (1 to 64 streams) came back with a verified
+  receipt. One job took about 14 ms more than with vLLM alone.
+- Routing, not sharding: one model split across a MI300X and a 3090 over the
+  internet ran 12 times slower. Remote experts of a mixture-of-experts (MoE)
+  model ran 55 times slower. Separate whole-model nodes gave lower latency, not
+  more throughput. Therefore SIMON routes whole jobs. If a model does not fit
+  on one node, SIMON splits it.
 
 ## Build
 
@@ -120,21 +161,35 @@ comparison itself — that is the next measurement, on AMD Developer Cloud.
 cargo build --release
 ```
 
-Rust workspace, no external services required to build. Running a node
-additionally needs an OpenAI-compatible inference server (we use vLLM on Linux,
-llama.cpp elsewhere).
+SIMON is a Rust workspace. The build needs no external services. A node also
+needs an OpenAI-compatible inference server. We use vLLM on Linux and llama.cpp
+elsewhere.
+
+```bash
+# a node in front of any OpenAI-compatible backend
+simon --role node --listen /ip4/0.0.0.0/tcp/9001 --model-url http://127.0.0.1:8000 \
+      --model-hash my-model --key-file node.key
+# OpenAI-compatible API in front of SIMON nodes (stdlib Python); jobs logged for the monitor
+SIMON_API_NODES=nodes.json SIMON_API_JOBLOG=jobs.jsonl python3 tools/simon-api/simon_api.py
+# read-only monitor JSON for the /network page
+SIMON_MONITOR_CONFIG=monitor.json SIMON_API_JOBLOG=jobs.jsonl python3 tools/simon-monitor/simon_monitor.py
+```
+
+The top of each script documents its file formats.
 
 ## Documentation
 
-- `docs/whitepaper/SIMON-Whitepaper-EN.pdf` — full write-up (EN; PL version alongside)
-- `docs/design/DESIGN-VERIFIER-0.md` — verifier economics, drift measurements, open questions *(Polish)*
-- `ROADMAP.md` — what is done, what is blocked, and by what *(Polish)*
-- `przyklady/README.en.md` — a real receipt you can verify offline in one command
-- `docs/SECURITY-LOG.en.md` — every fix with the behaviour it replaced, and the current status table
-- `docs/PAZUR-macos-bringup.md` — the macOS bring-up runbook, including the traps *(Polish)*
-- `notebooks/SIMON-D2-ROCm.ipynb` — the cross-vendor measurement itself, runnable on
-  AMD Developer Cloud; the CUDA baseline is embedded, so it reports a verdict in-session
+- `docs/whitepaper/SIMON-Whitepaper-EN.pdf`: the full write-up (EN, with a PL version alongside)
+- `docs/design/DESIGN-VERIFIER-0.md`: verifier economics, drift measurements, open questions (Polish)
+- `ROADMAP.md`: what is done, what is blocked, and by what (Polish)
+- `przyklady/README.en.md`: a real receipt that you can verify offline in one command
+- `docs/AMD-MI300X-RESULTS.md`: the MI300X measurements: cross-vendor false positives, node + API, throughput, MoE, concurrency
+- `docs/WASH-COMPUTE.md`: the wash-compute problem, a research proposal, and our review of it
+- `docs/SECURITY-LOG.en.md`: every fix with the behavior it replaced, and the current status table
+- `docs/PAZUR-macos-bringup.md`: the macOS bring-up runbook, with the traps (Polish)
+- `notebooks/SIMON-D2-ROCm.ipynb`: the cross-vendor measurement itself. It runs on
+  AMD Developer Cloud. The CUDA baseline is embedded, so it reports a verdict in one session.
 
-## Licence
+## License
 
 MIT.

@@ -109,11 +109,11 @@ pub fn weryfikuj(
         powod: if ok {
             None
         } else if !podpis_ok {
-            Some("podpis Ed25519 nie pasuje do odcisku receiptu".into())
+            Some("Ed25519 signature does not match the receipt digest".into())
         } else if tresc_ok == Some(false) {
-            Some("odcisk treści (job_id + output) nie zgadza się z receiptem".into())
+            Some("output digest (job_id + output) does not match the receipt".into())
         } else {
-            Some("nie wszystkie bramki zgodności przeszły".into())
+            Some("not all checks passed".into())
         },
     })
 }
@@ -185,7 +185,7 @@ pub fn ocena_m3(audyt_json: &str, k: u32, max_margin: f64, max_poza: f64) -> Str
     match simon_core::m3::ocena_json(audyt_json, &polityka) {
         Ok(w) => serde_json::to_string(&w).unwrap_or_else(|_| "{\"ok\":false}".into()),
         Err(e) => {
-            serde_json::json!({"ok": false, "powod": format!("zły audyt: {e}")}).to_string()
+            serde_json::json!({"ok": false, "powod": format!("invalid audit: {e}")}).to_string()
         }
     }
 }

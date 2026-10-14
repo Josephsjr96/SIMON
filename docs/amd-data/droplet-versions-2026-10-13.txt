@@ -1,0 +1,9 @@
+== droplet 2026-10-13 (overhead run)
+#!/bin/bash
+cd /root
+exec vllm serve Qwen/Qwen3.8-27B --served-model-name qwen3.8-27b-bf16 --host 0.0.0.0 --port 8000   --max-model-len 8192 --max-num-seqs 64 --gpu-memory-utilization 0.9 --language-model-only   --reasoning-parser qwen3 > /shared-docker/vllm.log 2>&1 < /dev/null
+===
+0.27.1+rocm723
+GPU[0]		: Card Series: 		AMD Instinct MI300X VF
+09d0bc1bbfbe486540bba7137addeb35bdf48f24c791d3eb53ac266cf60d0a37  /usr/local/bin/simon
+1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
