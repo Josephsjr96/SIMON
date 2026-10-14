@@ -298,6 +298,12 @@ def main():
             print(f"fingerprint {i + 1}/{a.n} -> {a.out}")
         return
     fps = [json.loads(l) for p in a.refs for l in open(p) if l.strip()]
+    # An endpoint error (connection, gateway, unverified receipt) is infrastructure, not behaviour: such a
+    # fingerprint is dropped and counted, never scored.
+    bad = [fp for fp in fps if any(t["error"] for t in fp["trajectories"])]
+    fps = [fp for fp in fps if fp not in bad]
+    if bad:
+        print(f"dropped {len(bad)} fingerprint(s) with endpoint errors: {collections.Counter(f['label'] for f in bad)}")
     for fp in fps:
         fp["features"] = features(fp)  # recompute: feature code may have changed since collection
     if a.cmd == "eval":
