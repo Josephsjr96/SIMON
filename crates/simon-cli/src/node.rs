@@ -303,12 +303,10 @@ async fn policz(
 ) -> PromptReply {
     let start = Instant::now();
     let url = format!("{}/v1/chat/completions", model_url.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "model": model_hash,
-        "messages": [{"role": "user", "content": req.prompt}],
-        "max_tokens": req.max_tokens,
-        "temperature": 0.0,
-    });
+    let body = match cialo_zapytania(model_hash, req) {
+        Ok(b) => b,
+        Err(e) => return blad(req, "zle_zlecenie", &e),
+    };
 
     let klient = match reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
@@ -349,19 +347,7 @@ async fn policz(
         Err(e) => return blad(req, "json", &format!("zła odpowiedź modelu: {e}")),
     };
 
-    // qwen3.8 (i inne modele rozumujące) potrafią zużyć WSZYSTKIE tokeny na
-    // pole `reasoning`, zostawiając `content` puste. Bierzemy content, a jeśli
-    // go nie ma — reasoning, żeby odpowiedź NIGDY nie była pusta bez powodu.
-    let msg = &v["choices"][0]["message"];
-    let content = msg["content"].as_str().unwrap_or("").trim().to_string();
-    let reasoning = msg["reasoning"].as_str().unwrap_or("").trim().to_string();
-    let (output, byl_reasoning) = if !content.is_empty() {
-        (content, false)
-    } else if !reasoning.is_empty() {
-        (reasoning, true)
-    } else {
-        (String::new(), false)
-    };
+    let (output, byl_reasoning) = wyjscie(&v, req.chat);
     if byl_reasoning {
         println!("[node] UWAGA: content pusty, użyłem pola reasoning (limit tokenów?)");
     }
@@ -413,6 +399,88 @@ async fn policz(
         ttft_ms,
         gen_ms,
     })
+}
+
+/// Pola żądania czatu, które node przekazuje backendowi. Biała lista: reszta
+/// (np. `stream`, `n`, `logprobs`) zmieniłaby kształt odpowiedzi albo koszt
+/// bez wiedzy node'a.
+const POLA_CZATU: &[&str] = &["tools", "tool_choice", "parallel_tool_calls", "temperature", "top_p", "stop"];
+
+/// Ciało `/v1/chat/completions`. Tryb tekstowy: jeden prompt użytkownika.
+/// Tryb czatu: wiadomości i pola z białej listy z JSON-a, który klient podpisał.
+fn cialo_zapytania(model: &str, req: &PromptRequest) -> Result<serde_json::Value, String> {
+    if !req.chat {
+        return Ok(serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": req.prompt}],
+            "max_tokens": req.max_tokens,
+            "temperature": 0.0,
+        }));
+    }
+    let v: serde_json::Value = serde_json::from_str(&req.prompt)
+        .map_err(|e| format!("tryb czatu: prompt nie jest JSON-em: {e}"))?;
+    let wiadomosci = v
+        .get("messages")
+        .filter(|m| m.as_array().is_some_and(|a| !a.is_empty()))
+        .ok_or("tryb czatu: brak niepustej tablicy `messages`")?;
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": wiadomosci,
+        "max_tokens": req.max_tokens,
+        "temperature": 0.0,
+    });
+    for k in POLA_CZATU {
+        if let Some(x) = v.get(*k) {
+            body[*k] = x.clone();
+        }
+    }
+    Ok(body)
+}
+
+/// Co node podpisuje (`output`) + czy treść przyszła z pola reasoning.
+///
+/// Tryb tekstowy: `content`, a gdy pusty — `reasoning` (qwen3.8 i inne modele
+/// rozumujące potrafią zużyć wszystkie tokeny na rozumowanie), żeby odpowiedź
+/// nigdy nie była pusta bez powodu.
+///
+/// Tryb czatu: JSON wiadomości `{content, tool_calls?, finish_reason}`. Receipt
+/// wiąże więc nazwy i argumenty narzędzi, a `finish_reason` nie da udawać, że
+/// ucięte w połowie argumenty to kompletne wywołanie.
+fn wyjscie(v: &serde_json::Value, chat: bool) -> (String, bool) {
+    let msg = &v["choices"][0]["message"];
+    let surowy = msg["content"].as_str().unwrap_or("");
+    let reasoning = msg["reasoning"]
+        .as_str()
+        .or(msg["reasoning_content"].as_str())
+        .unwrap_or("")
+        .trim();
+    let narzedzia = msg
+        .get("tool_calls")
+        .filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+    let (tekst, byl_reasoning) = if !surowy.trim().is_empty() {
+        (if chat { surowy.to_string() } else { surowy.trim().to_string() }, false)
+    } else if !reasoning.is_empty() && narzedzia.is_none() {
+        (reasoning.to_string(), true)
+    } else {
+        (String::new(), false)
+    };
+    if !chat {
+        return (tekst, byl_reasoning);
+    }
+    let mut m = serde_json::Map::new();
+    m.insert(
+        "content".into(),
+        if tekst.is_empty() && narzedzia.is_some() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(tekst)
+        },
+    );
+    if let Some(t) = narzedzia {
+        m.insert("tool_calls".into(), t.clone());
+    }
+    m.insert("finish_reason".into(), v["choices"][0]["finish_reason"].clone());
+    (serde_json::Value::Object(m).to_string(), byl_reasoning)
 }
 
 /// C: odczytuje od backendu DWA fakty o node: `id` modelu i `max_model_len`.
@@ -796,6 +864,7 @@ mod testy_wspolbieznosci {
                         max_tokens: 1,
                         max_ctx: 1,
                         nonce: "n".into(),
+                        chat: false,
                     };
                     crate::agent::wyslij_i_czekaj(&mut swarm, peer, req).await
                 })
@@ -810,5 +879,59 @@ mod testy_wspolbieznosci {
             czas < OPOZNIENIE * 3,
             "4 prompty trwały {czas:?} — liczone po kolei, nie naraz"
         );
+    }
+}
+
+#[cfg(test)]
+mod testy_czatu {
+    use super::{cialo_zapytania, wyjscie};
+    use serde_json::json;
+    use simon_harness::request_response::PromptRequest;
+
+    fn req(prompt: &str, chat: bool) -> PromptRequest {
+        PromptRequest {
+            v: 1,
+            order_id: "o".into(),
+            job_id: "j".into(),
+            model_hash: "m".into(),
+            prompt: prompt.into(),
+            max_tokens: 50,
+            max_ctx: 10,
+            nonce: "n".into(),
+            chat,
+        }
+    }
+
+    #[test]
+    fn czat_przekazuje_narzedzia_z_bialej_listy_i_nic_poza_nia() {
+        let p = json!({"messages": [{"role": "user", "content": "hej"}],
+                       "tools": [{"type": "function", "function": {"name": "ls"}}],
+                       "temperature": 0.7, "stream": true, "n": 5}).to_string();
+        let b = cialo_zapytania("m", &req(&p, true)).unwrap();
+        assert_eq!(b["tools"][0]["function"]["name"], "ls");
+        assert_eq!(b["temperature"], 0.7, "parametr klienta, nie wymuszone 0");
+        assert!(b.get("stream").is_none() && b.get("n").is_none(), "spoza białej listy: {b}");
+        assert!(cialo_zapytania("m", &req(r#"{"messages": []}"#, true)).is_err());
+        assert!(cialo_zapytania("m", &req("nie json", true)).is_err());
+        // tryb tekstowy bez zmian: prompt jako jedna wiadomość użytkownika
+        let t = cialo_zapytania("m", &req("nie json", false)).unwrap();
+        assert_eq!(t["messages"][0]["content"], "nie json");
+    }
+
+    #[test]
+    fn czat_podpisuje_wywolania_narzedzi_i_finish_reason() {
+        let v = json!({"choices": [{"finish_reason": "tool_calls", "message": {"content": null,
+            "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "read_file", "arguments": "{\"path\":\"a.rs\"}"}}]}}]});
+        let (out, _) = wyjscie(&v, true);
+        let m: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(m["content"].is_null());
+        assert_eq!(m["tool_calls"][0]["function"]["arguments"], "{\"path\":\"a.rs\"}");
+        assert_eq!(m["finish_reason"], "tool_calls");
+        // ucięte wywołanie zostaje ucięte: finish_reason=length jest w podpisanym wyniku
+        let v2 = json!({"choices": [{"finish_reason": "length", "message": {"content": "abc"}}]});
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&wyjscie(&v2, true).0).unwrap()["finish_reason"], "length");
+        // tryb tekstowy: sam tekst, jak dotąd
+        assert_eq!(wyjscie(&v2, false).0, "abc");
     }
 }

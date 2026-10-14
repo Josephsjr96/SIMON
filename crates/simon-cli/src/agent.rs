@@ -43,9 +43,14 @@ const NARZUT_SZABLONU_TOKENOW: u32 = 60;
 const MARGINES_ZAOSTRZENIA: f64 = 0.9;
 
 pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
-    if opcje.prompt.is_none() && opcje.file.is_none() {
-        return Err("agent wymaga --prompt <tekst> lub --file <ścieżka>".into());
+    if opcje.prompt.is_none() && opcje.file.is_none() && opcje.request_file.is_none() {
+        return Err("agent wymaga --prompt <tekst>, --file <ścieżka> lub --request-file <ścieżka|->".into());
     }
+    // Tryb czatu czytamy PRZED siecią: zły JSON ma paść, zanim cokolwiek wyślemy.
+    let czat = match opcje.request_file.as_deref() {
+        Some(zrodlo) => Some(wczytaj_zlecenie_czatu(zrodlo)?),
+        None => None,
+    };
     if opcje.bootstrap.is_empty() {
         return Err("agent wymaga --bootstrap <multiaddr nody>".into());
     }
@@ -98,9 +103,20 @@ pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
         return uruchom_map_reduce(opcje, sciezka, &pytanie, &mut swarm, peer, &model_zadany, &klucz).await;
     }
 
+    if let Some(tresc) = czat {
+        let (order, request) = zbuduj_zlecenie(&model_zadany, &tresc, opcje.fee, opcje.max_tokens, &klucz, true)?;
+        eprintln!("[agent] order_id={} (tryb czatu)", order.order_id);
+        let t0 = std::time::Instant::now();
+        let (reply, siec_ms) = wyslij_i_czekaj(&mut swarm, peer, request).await?;
+        if let PromptReply::Ok(r) = &reply {
+            sprawdz_wiadomosc_czatu(&r.output)?;
+        }
+        return obsluz_odpowiedz(reply, siec_ms, &order.model_hash, opcje.json, t0, &klucz, opcje.rejestr.as_deref());
+    }
+
     // --- Etap A (dziś jedyny etap, gdy --then-bootstrap nie podany) ---
     let prompt = opcje.prompt.clone().expect("sprawdzone na górze funkcji");
-    let (order, request) = zbuduj_zlecenie(&model_zadany, &prompt, opcje.fee, opcje.max_tokens, &klucz)?;
+    let (order, request) = zbuduj_zlecenie(&model_zadany, &prompt, opcje.fee, opcje.max_tokens, &klucz, false)?;
     eprintln!("[agent] order_id={}", order.order_id);
     eprintln!("[agent] model={} fee={}", order.model_hash, order.fee_think);
     eprintln!("[agent] wysyłam prompt do {peer} (/simon/prompt/1)...");
@@ -126,13 +142,62 @@ pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
     let then_peer = znajdz_peera(&opcje.then_bootstrap, "--then-bootstrap")?;
 
     let tekst_b = zbuduj_prompt_then(&then_prompt_tekst, &wynik_a);
-    let (order_b, request_b) = zbuduj_zlecenie(&then_model, &tekst_b, opcje.fee, opcje.max_tokens, &klucz)?;
+    let (order_b, request_b) = zbuduj_zlecenie(&then_model, &tekst_b, opcje.fee, opcje.max_tokens, &klucz, false)?;
     eprintln!("[agent] etap B: wysyłam do {then_peer} (/simon/prompt/1)...");
     let t0b = std::time::Instant::now();
     let (reply_b, siec_ms_b) = wyslij_i_czekaj(&mut swarm, then_peer, request_b).await?;
 
     println!("\n=== ETAP B ===");
     obsluz_odpowiedz(reply_b, siec_ms_b, &order_b.model_hash, opcje.json, t0b, &klucz, opcje.rejestr.as_deref())
+}
+
+/// Pola żądania OpenAI, które idą do node'a (ta sama biała lista co w node.rs).
+const POLA_CZATU: &[&str] = &["tools", "tool_choice", "parallel_tool_calls", "temperature", "top_p", "stop"];
+
+/// `--request-file`: żądanie w kształcie OpenAI (plik albo `-` = stdin, więc
+/// treść nie trafia do `ps`). Zwraca JSON, który zostanie podpisany w
+/// autoryzacji i wysłany node'owi — DOKŁADNIE te bajty, bez ponownego kodowania.
+fn wczytaj_zlecenie_czatu(zrodlo: &str) -> Result<String, String> {
+    use std::io::Read;
+    let mut tekst = String::new();
+    if zrodlo == "-" {
+        std::io::stdin()
+            .read_to_string(&mut tekst)
+            .map_err(|e| format!("--request-file -: nie mogę czytać stdin: {e}"))?;
+    } else {
+        tekst = std::fs::read_to_string(zrodlo).map_err(|e| format!("--request-file {zrodlo}: {e}"))?;
+    }
+    zlecenie_czatu_z_json(&tekst)
+}
+
+fn zlecenie_czatu_z_json(tekst: &str) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(tekst).map_err(|e| format!("--request-file: to nie JSON: {e}"))?;
+    let wiadomosci = v
+        .get("messages")
+        .filter(|m| m.as_array().is_some_and(|a| !a.is_empty()))
+        .ok_or("--request-file: brak niepustej tablicy `messages`")?;
+    let mut z = serde_json::Map::new();
+    z.insert("messages".into(), wiadomosci.clone());
+    for k in POLA_CZATU {
+        if let Some(x) = v.get(*k) {
+            z.insert((*k).into(), x.clone());
+        }
+    }
+    Ok(serde_json::Value::Object(z).to_string())
+}
+
+/// Tryb czatu: wynik MUSI być wiadomością JSON. Stary node zignoruje `chat`,
+/// policzy JSON jak zwykły tekst i podpisze odpowiedź — podpis będzie ważny,
+/// a treść bez sensu. Tu to łapiemy, zamiast oddać „zweryfikowaną” bzdurę.
+fn sprawdz_wiadomosc_czatu(output: &str) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(output).map_err(|_| {
+        "node nie obsługuje trybu czatu (stara wersja?): odpowiedź nie jest wiadomością JSON".to_string()
+    })?;
+    if !v.is_object() || v.get("finish_reason").is_none() {
+        return Err("node nie obsługuje trybu czatu (stara wersja?): brak `finish_reason` w odpowiedzi".into());
+    }
+    Ok(())
 }
 
 /// Parsuje peer_id z listy multiadresów (`.../p2p/<id>`), używane dla
@@ -285,7 +350,7 @@ async fn uruchom_map_reduce(
             }
             let tekst_reduce = zbuduj_prompt_reduce(pytanie, &grupa);
             let (_order, request) =
-                zbuduj_zlecenie(model, &tekst_reduce, opcje.fee, opcje.max_tokens, klucz)?;
+                zbuduj_zlecenie(model, &tekst_reduce, opcje.fee, opcje.max_tokens, klucz, false)?;
             let (reply, _ms) = wyslij_i_czekaj(swarm, peer, request).await?;
             nowy_poziom.push(wyodrebnij_output(reply, model)?);
         }
@@ -325,7 +390,7 @@ async fn wyslij_kawalek_z_retry(
 
     while let Some((fragment, glebokosc_zostala)) = kolejka.pop_front() {
         let tekst = zbuduj_prompt_map(pytanie, &fragment, i, n);
-        let (_order, request) = zbuduj_zlecenie(model, &tekst, fee, max_tokens, klucz)?;
+        let (_order, request) = zbuduj_zlecenie(model, &tekst, fee, max_tokens, klucz, false)?;
         let (reply, _ms) = wyslij_i_czekaj(swarm, peer, request).await?;
         match reply {
             PromptReply::Blad(e) if e.kod == "ctx_ponad_limit" && glebokosc_zostala > 0 => {
@@ -395,6 +460,7 @@ fn zbuduj_zlecenie(
     fee: u64,
     max_tokens: u32,
     klucz: &Keypair,
+    chat: bool,
 ) -> Result<(JobOrder, PromptRequest), String> {
     let mut order = JobOrder::new(model, tresc.as_bytes(), fee, 300, klucz.public().to_hex())
         .map_err(|e| format!("nie mogę zbudować zlecenia: {e}"))?;
@@ -436,6 +502,7 @@ fn zbuduj_zlecenie(
             / crate::mapreduce::ZNAK_NA_TOKEN_PROZA_GENEROWANA)
             .ceil() as u32,
         nonce: order.nonce.clone(),
+        chat,
     };
     Ok((order, request))
 }
@@ -690,6 +757,18 @@ fn _rejestr() -> RejestrKoordynatorow {
 mod tests {
     use super::*;
 
+    #[test]
+    fn czat_wymaga_wiadomosci_i_odrzuca_tekst_ze_starego_node() {
+        let z = zlecenie_czatu_z_json(r#"{"messages":[{"role":"user","content":"x"}],"tools":[],"stream":true}"#).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&z).unwrap();
+        assert!(v.get("tools").is_some() && v.get("stream").is_none());
+        assert!(zlecenie_czatu_z_json(r#"{"messages":[]}"#).is_err());
+        assert!(zlecenie_czatu_z_json("nie json").is_err());
+        // stary node: zwykły tekst zamiast wiadomości JSON -> błąd, nie „zweryfikowana” bzdura
+        assert!(sprawdz_wiadomosc_czatu("Sure! Here is the answer.").is_err());
+        assert!(sprawdz_wiadomosc_czatu(r#"{"content":"x","finish_reason":"stop"}"#).is_ok());
+    }
+
     fn bazowe_opcje() -> Opcje {
         Opcje {
             rola: crate::Rola::Agent,
@@ -700,6 +779,7 @@ mod tests {
             prompt: None,
             max_tokens: 128,
             max_jobs: 1,
+            request_file: None,
             fee: 1,
             key: None,
             file: None,
@@ -943,7 +1023,7 @@ mod tests {
     #[test]
     fn zbuduj_zlecenie_daje_spojny_request() {
         let klucz = simon_core::crypto::Keypair::generate();
-        let (order, request) = zbuduj_zlecenie("model-x", "tresc testowa", 1, 64, &klucz).unwrap();
+        let (order, request) = zbuduj_zlecenie("model-x", "tresc testowa", 1, 64, &klucz, false).unwrap();
         assert_eq!(order.model_hash, "model-x");
         assert_eq!(request.model_hash, "model-x");
         assert_eq!(request.prompt, "tresc testowa");

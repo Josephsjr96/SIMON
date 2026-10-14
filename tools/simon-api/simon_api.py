@@ -26,16 +26,8 @@ _joblog_lock = threading.Lock()
 NODES = json.load(open(os.environ["SIMON_API_NODES"])) if os.environ.get("SIMON_API_NODES") else {}
 
 
-def to_prompt(messages):
-    # ponytail: the SIMON agent takes one prompt string, so roles are flattened into text.
-    # Upgrade path: a multi-message field in the protocol.
-    parts = []
-    for m in messages:
-        c = m.get("content", "")
-        if isinstance(c, list):  # OpenAI content parts: keep text only
-            c = "".join(p.get("text", "") for p in c if isinstance(p, dict))
-        parts.append(f"{m.get('role', 'user')}: {c}")
-    return "\n\n".join(parts) if len(parts) > 1 else (parts[0].split(": ", 1)[1] if parts else "")
+# Fields of an OpenAI request that travel to the node (the node keeps the same whitelist).
+CHAT_FIELDS = ("messages", "tools", "tool_choice", "parallel_tool_calls", "temperature", "top_p", "stop")
 
 
 def log_job(model, r):
@@ -54,13 +46,14 @@ def log_job(model, r):
         f.write(line)
 
 
-def run_job(node, prompt, max_tokens):
+def run_job(node, req, max_tokens):
     # ponytail: one process per request (~1 s libp2p setup each); a long-lived agent if throughput matters.
-    # Note: --prompt is visible in `ps` to other local users; the agent has no stdin mode yet.
+    # The request goes in on stdin (chat mode): messages and tools never show up in `ps`.
     cmd = [BIN, "--role", "agent", "--bootstrap", node["bootstrap"], "--model-hash", node["model_hash"],
-           "--prompt", prompt, "--max-tokens", str(max_tokens), "--identity-file", IDENTITY, "--json"]
+           "--request-file", "-", "--max-tokens", str(max_tokens), "--identity-file", IDENTITY, "--json"]
+    chat = json.dumps({k: req[k] for k in CHAT_FIELDS if k in req})
     t0 = time.time()
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S)
+    p = subprocess.run(cmd, input=chat, capture_output=True, text=True, timeout=TIMEOUT_S)
     job_ms = int((time.time() - t0) * 1000)  # includes time queued on the node (node --max-jobs)
     # --json should print one JSON object, but the CLI also prints a log line first: take the JSON line.
     js = next((l for l in reversed(p.stdout.splitlines()) if l.startswith("{")), None)
@@ -69,6 +62,42 @@ def run_job(node, prompt, max_tokens):
     r = json.loads(js)
     r["_job_ms"] = job_ms
     return r
+
+
+def completion(req, r, t0):
+    """Message, finish_reason, usage and the receipt block of one verified SIMON job.
+
+    The agent verified the receipt over the raw `output` string BEFORE this runs; only then is the
+    string parsed. Nothing re-encodes it on the trusted path.
+    """
+    m = json.loads(r["output"])  # chat mode: {"content", "tool_calls"?, "finish_reason"}
+    msg = {"role": "assistant", "content": m.get("content")}
+    if m.get("tool_calls"):
+        msg["tool_calls"] = m["tool_calls"]
+    rc = r.get("receipt", {})
+    usage = {"prompt_tokens": rc.get("prompt_tokens"), "completion_tokens": rc.get("completion_tokens"),
+             "total_tokens": (rc.get("prompt_tokens") or 0) + (rc.get("completion_tokens") or 0)}
+    simon = {
+        "job_id": r.get("job_id"), "node_id": rc.get("node_id"), "runtime": rc.get("runtime"),
+        # Three separate claims; a valid signature is not a verified computation.
+        "execution_status": "completed",
+        "receipt_status": "signature_valid_output_bound",
+        "verification_status": "not_performed",
+        "proof_level": 0,
+        "proof_note": "the node's key signed this exact output (text and tool calls) for this job; "
+                      "this does NOT prove which model or precision ran",
+        "receipt": rc,
+        "client_observed_ms": int((time.time() - t0) * 1000),
+        "receipt_hash": (r.get("obserwacja_klienta") or {}).get("receipt_hash"),
+    }
+    return msg, m.get("finish_reason") or "stop", usage, simon
+
+
+def _try(f, *a):
+    try:
+        return f(*a)
+    except Exception as e:  # handed to the streaming loop as a value
+        return e
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -100,17 +129,17 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         except ValueError:
             return self._err(400, "invalid JSON")
-        if req.get("stream"):
-            return self._err(400, "streaming is not supported yet: set stream=false")
         node = NODES.get(req.get("model"))
         if not node:
             return self._err(404, f"unknown model {req.get('model')!r}; see /v1/models")
-        prompt = to_prompt(req.get("messages") or [])
-        if not prompt.strip():
+        msgs = req.get("messages")
+        if not isinstance(msgs, list) or not msgs:
             return self._err(400, "empty messages")
+        if req.get("stream"):
+            return self._stream(node, req)
         t0 = time.time()
         try:
-            r = run_job(node, prompt, int(req.get("max_tokens") or 512))
+            r = run_job(node, req, int(req.get("max_tokens") or 512))
         except subprocess.TimeoutExpired:
             return self._err(504, "SIMON job timed out")
         except Exception as e:  # node unreachable, verification failure, etc.
@@ -120,31 +149,57 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(502, f"SIMON job failed: {e}")
         if not r.get("receipt_zweryfikowany"):
             return self._err(502, "receipt did not verify — answer withheld")
-        rc = r.get("receipt", {})
-        out = {
-            "id": "chatcmpl-" + uuid.uuid4().hex[:24], "object": "chat.completion", "created": int(t0),
-            "model": req.get("model"),
-            "choices": [{"index": 0, "finish_reason": "stop",
-                         "message": {"role": "assistant", "content": r.get("output", "")}}],
-            "usage": {"prompt_tokens": rc.get("prompt_tokens"), "completion_tokens": rc.get("completion_tokens"),
-                      "total_tokens": (rc.get("prompt_tokens") or 0) + (rc.get("completion_tokens") or 0)},
-            "simon": {
-                "job_id": r.get("job_id"), "node_id": rc.get("node_id"), "runtime": rc.get("runtime"),
-                # Three separate claims; a valid signature is not a verified computation.
-                "execution_status": "completed",
-                "receipt_status": "signature_valid_output_bound",
-                "verification_status": "not_performed",
-                "proof_level": 0,
-                "proof_note": "the node's key signed this exact output for this job; "
-                              "this does NOT prove which model or precision ran",
-                "receipt": rc,
-                "client_observed_ms": int((time.time() - t0) * 1000),
-                "receipt_hash": (r.get("obserwacja_klienta") or {}).get("receipt_hash"),
-            },
-        }
+        msg, finish, usage, simon = completion(req, r, t0)
+        out = {"id": "chatcmpl-" + uuid.uuid4().hex[:24], "object": "chat.completion", "created": int(t0),
+               "model": req.get("model"), "choices": [{"index": 0, "finish_reason": finish, "message": msg}],
+               "usage": usage, "simon": simon}
         log_job(req.get("model"), r)
         self._send(200, out, headers=[("x-simon-job-id", str(r.get("job_id"))),
-                                       ("x-simon-node-id", str(rc.get("node_id")))])
+                                       ("x-simon-node-id", str(simon["node_id"]))])
+
+    def _stream(self, node, req):
+        # ponytail: streaming after the fact. A libp2p request-response job returns one reply, so the
+        # whole answer arrives at once; the role chunk goes out immediately and a keepalive comment every
+        # few seconds, so a client does not time out while the node computes. Token-by-token streaming
+        # needs a streaming protocol between agent and node.
+        cid, t0 = "chatcmpl-" + uuid.uuid4().hex[:24], time.time()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        def ev(delta=None, finish=None, extra=None, raw=None):
+            body = raw if raw is not None else {"id": cid, "object": "chat.completion.chunk", "created": int(t0),
+                                                "model": req.get("model"),
+                                                "choices": [{"index": 0, "delta": delta or {}, "finish_reason": finish}]}
+            if extra:
+                body.update(extra)
+            self.wfile.write(b"data: " + json.dumps(body, ensure_ascii=False).encode() + b"\n\n")
+            self.wfile.flush()
+
+        ev({"role": "assistant", "content": ""})
+        box = {}
+        th = threading.Thread(target=lambda: box.update(r=_try(run_job, node, req, int(req.get("max_tokens") or 512))))
+        th.start()
+        while th.is_alive():
+            th.join(5)
+            if th.is_alive():
+                self.wfile.write(b": simon job running\n\n")
+                self.wfile.flush()
+        r = box["r"]
+        if isinstance(r, Exception) or not r.get("receipt_zweryfikowany"):
+            err = str(r) if isinstance(r, Exception) else "receipt did not verify — answer withheld"
+            ev(raw={"error": {"message": f"SIMON job failed: {err}", "type": "simon_error"}})
+        else:
+            msg, finish, usage, simon = completion(req, r, t0)
+            if msg.get("content"):
+                ev({"content": msg["content"]})
+            if msg.get("tool_calls"):
+                ev({"tool_calls": [dict(tc, index=i) for i, tc in enumerate(msg["tool_calls"])]})
+            ev(finish=finish, extra={"usage": usage, "simon": simon})
+            log_job(req.get("model"), r)
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
 
     def log_message(self, fmt, *args):  # no prompt content in logs, just the request line
         print(f"[simon-api] {self.address_string()} {fmt % args}", flush=True)

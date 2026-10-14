@@ -37,6 +37,11 @@ OPCJE:
     --model-hash <hash>      [node] deklarowany model / [agent] model, o który prosisz
     --prompt <tekst>         [agent] prompt do policzenia; w trybie --file
                              to PYTANIE/instrukcja stosowana do każdego kawałka
+    --request-file <plik|->  [agent] tryb czatu: żądanie OpenAI z `messages`
+                             (i opcjonalnie `tools`, `tool_choice`,
+                             `temperature`, `top_p`, `stop`); `-` = stdin,
+                             więc treść nie trafia do `ps`. Wynik to JSON
+                             wiadomości (content, tool_calls, finish_reason)
     --file <ścieżka>         [agent] M3.x: plik większy niż limit node'a —
                              włącza chunkowanie + map-reduce (sekwencyjnie,
                              hierarchiczna redukcja). Patrz PRZYKŁADY.
@@ -137,6 +142,8 @@ pub struct Opcje {
     pub max_tokens: u32,
     /// Ile promptów node liczy równocześnie (sloty backendu).
     pub max_jobs: usize,
+    /// Tryb czatu: żądanie OpenAI (messages, tools) z pliku albo `-` (stdin).
+    pub request_file: Option<String>,
     pub fee: u64,
     /// M2.5.1: trwały klucz node'a (hex, 32 B seed). Bez tego node losuje
     /// klucz przy każdym starcie i klient nie ma stałej tożsamości do weryfikacji.
@@ -192,6 +199,7 @@ impl Opcje {
         let mut prompt = None;
         let mut max_tokens = 128u32;
         let mut max_jobs = 1usize;
+        let mut request_file = None;
         let mut fee = 1u64;
         let mut key = None;
         let mut file = None;
@@ -236,6 +244,7 @@ impl Opcje {
                 "--model-url" => model_url = Some(wartosc(&mut i, "--model-url")?),
                 "--model-hash" => model_hash = Some(wartosc(&mut i, "--model-hash")?),
                 "--prompt" => prompt = Some(wartosc(&mut i, "--prompt")?),
+                "--request-file" => request_file = Some(wartosc(&mut i, "--request-file")?),
                 "--max-tokens" => {
                     let v = wartosc(&mut i, "--max-tokens")?;
                     max_tokens = v.parse().map_err(|_| format!("zły --max-tokens: {v}"))?;
@@ -297,6 +306,7 @@ impl Opcje {
             prompt,
             max_tokens,
             max_jobs,
+            request_file,
             fee,
             key,
             file,

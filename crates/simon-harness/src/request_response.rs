@@ -37,6 +37,17 @@ pub struct PromptRequest {
     pub max_ctx: u32,
     /// Nonce zlecenia (M0.2/M0.4b) — wiąże prompt z autoryzacją.
     pub nonce: String,
+    /// Tryb czatu (narzędzia, wiele wiadomości). `prompt` niesie wtedy JSON
+    /// `{"messages":[...], "tools":[...], ...}` — te same bajty, które klient
+    /// podpisał w autoryzacji (payload_digest), więc wiadomości i narzędzia
+    /// są objęte autoryzacją bez zmiany formatu zlecenia. `output` jest wtedy
+    /// JSON-em wiadomości asystenta (`content`, `tool_calls`, `finish_reason`)
+    /// i receipt wiąże wywołania narzędzi tak samo jak tekst.
+    ///
+    /// Stary node pole zignoruje i potraktuje JSON jak tekst — agent łapie to,
+    /// bo w trybie czatu wymaga obiektu wiadomości w odpowiedzi.
+    #[serde(default)]
+    pub chat: bool,
 }
 
 /// Odpowiedź node'a (node → klient).
@@ -144,6 +155,7 @@ mod tests {
             max_tokens: 128,
             max_ctx: 1000,
             nonce: "n1".into(),
+            chat: false,
         };
         let bajty = serde_json::to_vec(&req).unwrap();
         let back: PromptRequest = serde_json::from_slice(&bajty).unwrap();

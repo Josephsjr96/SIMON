@@ -37,6 +37,7 @@ fn req(ctx: u32) -> PromptRequest {
         max_tokens: 128,
         max_ctx: ctx,
         nonce: "n1".into(),
+        chat: false,
     }
 }
 
