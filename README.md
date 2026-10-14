@@ -25,6 +25,18 @@ Try it:
 
 ---
 
+## Architecture
+
+1. A client (the `simon --role agent` CLI, or the OpenAI-compatible gateway in `tools/simon-api`) signs a
+   job order and sends the prompt to one node over libp2p request-response. Only that node sees the prompt.
+2. The node (`simon --role node`) runs the job on any OpenAI-compatible backend (vLLM, llama.cpp, a hosted
+   API) and returns the output with an Ed25519-signed receipt. The receipt binds the job, the output text
+   and the tool calls.
+3. The client verifies the receipt offline before it uses the answer (`simon --verify-receipt`, or in the
+   browser through the same Rust verifier compiled to WebAssembly).
+4. A verifier (`tools/simon-lidar`, pilot) checks which model a node serves, from the node's behaviour.
+   A receipt shows who signed an output. It does not show which model produced it.
+
 ## Status
 
 The software works. We measured every number below on our own machines, and
@@ -40,6 +52,9 @@ also names what is not done.
 | Agent↔agent orchestration (job B consumes job A's output) | working |
 | OpenAI-compatible API gateway (`tools/simon-api`): each completion is a real SIMON job with its receipt | working |
 | Network monitor (`/network` page + `tools/simon-monitor`) | working |
+| Tool calls and streaming through the gateway: coding agents (Cline, opencode) work through SIMON, and the receipt binds tool names, arguments and `finish_reason` | working, tested end to end (`tools/simon-api/check_tools.py`) |
+| Concurrent jobs on one node (`--max-jobs`, a queue, an explicit busy error) | working, measured on MI300X |
+| Model-identity verifier: agent behaviour (LIDAR-style) + single-token output distributions (`tools/simon-lidar`) | pilot, small N (see `tools/simon-lidar/README.md`) |
 | AMD ROCm node (MI300X) | working and measured (see below) |
 | Slashing rules for dishonest nodes | unresolved (see below) |
 
@@ -159,6 +174,7 @@ We measured it on ROCm instead of speculation (AMD Developer Cloud, 1× MI300X,
 
 ```bash
 cargo build --release
+cargo test --workspace      # 192 tests, 0 compiler warnings (CI runs on every push)
 ```
 
 SIMON is a Rust workspace. The build needs no external services. A node also

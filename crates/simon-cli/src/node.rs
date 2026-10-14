@@ -308,7 +308,7 @@ async fn policz(
         Err(e) => return blad(req, "zle_zlecenie", &e),
     };
 
-    let klient = match reqwest::Client::builder()
+    let klient = match klient_backendu()
         .timeout(Duration::from_secs(300))
         .build()
     {
@@ -383,7 +383,7 @@ async fn policz(
     // Receipt PRZED przeniesieniem `output` — podpisujemy dokladnie ten tekst,
     // ktory zaraz odeslemy.
     let receipt = zbuduj_podpisany_receipt(
-        klucz, model_hash, runtime, req, &output, prompt_tokens, tokens_out, ttft_ms, gen_ms,
+        klucz, model_hash, runtime, req, &output, prompt_tokens, tokens_out,
     );
 
     PromptReply::Ok(PromptResponse {
@@ -500,7 +500,7 @@ fn wyjscie(v: &serde_json::Value, chat: bool) -> (String, bool) {
 /// powód, żeby nie wstawać.
 async fn odczytaj_moje_fakty(model_url: &str, zadany: Option<&str>) -> (Option<String>, u32) {
     let url = format!("{}/v1/models", model_url.trim_end_matches('/'));
-    let klient = match reqwest::Client::builder()
+    let klient = match klient_backendu()
         .timeout(Duration::from_secs(10))
         .build()
     {
@@ -517,7 +517,43 @@ async fn odczytaj_moje_fakty(model_url: &str, zadany: Option<&str>) -> (Option<S
     };
     let puste = Vec::new();
     let lista = v["data"].as_array().unwrap_or(&puste);
-    wybierz_wpis(lista, zadany)
+    let (id, max_ctx) = wybierz_wpis(lista, zadany);
+    if max_ctx > 0 {
+        return (id, max_ctx);
+    }
+    // llama.cpp nie podaje `max_model_len` w /v1/models. Kontekst JEDNEGO slotu
+    // (`-c` podzielone przez `-np`) jest w /props. Bez tego bramka kontekstu była
+    // wyłączona i przepełnienie wracało dopiero z backendu (pilot LIDAR, 2026-10-14).
+    let props = format!("{}/props", model_url.trim_end_matches('/'));
+    let n_ctx = match klient.get(&props).send().await {
+        Ok(o) => o
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|p| p["default_generation_settings"]["n_ctx"].as_u64())
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0),
+        Err(_) => 0,
+    };
+    (id, n_ctx)
+}
+
+/// Klient HTTP do backendu modelu. `SIMON_MODEL_API_KEY` (np. AMD Token Factory)
+/// idzie jako `Authorization: Bearer`. Ze zmiennej środowiskowej, nie z argumentu:
+/// argumenty procesu widać w `ps` dla każdego użytkownika maszyny.
+fn klient_backendu() -> reqwest::ClientBuilder {
+    let b = reqwest::Client::builder();
+    match std::env::var("SIMON_MODEL_API_KEY") {
+        Ok(k) if !k.is_empty() => {
+            let mut h = reqwest::header::HeaderMap::new();
+            if let Ok(mut v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {k}")) {
+                v.set_sensitive(true);
+                h.insert(reqwest::header::AUTHORIZATION, v);
+            }
+            b.default_headers(h)
+        }
+        _ => b,
+    }
 }
 
 /// Który wpis z `/v1/models` opisuje NAS. Wydzielone z zapytania sieciowego,
@@ -571,7 +607,7 @@ fn wybierz_wpis(lista: &[serde_json::Value], zadany: Option<&str>) -> (Option<St
 /// jest mniej szkodliwe niż pewna zmyślona etykieta.
 async fn wykryj_runtime(model_url: &str) -> String {
     let baza = model_url.trim_end_matches('/');
-    let klient = match reqwest::Client::builder()
+    let klient = match klient_backendu()
         .timeout(Duration::from_secs(5))
         .build()
     {
@@ -609,7 +645,7 @@ async fn wykryj_runtime(model_url: &str) -> String {
 /// cichy fallback bez logu maskowałby realny błąd parsowania jako "nieosiągalny".
 async fn odczytaj_realny_ctx(model_url: &str, prompt: &str) -> Option<u32> {
     let url = format!("{}/tokenize", model_url.trim_end_matches('/'));
-    let klient = match reqwest::Client::builder()
+    let klient = match klient_backendu()
         .timeout(Duration::from_secs(10))
         .build()
     {
@@ -679,8 +715,6 @@ fn zbuduj_podpisany_receipt(
     output: &str,
     prompt_tokens: u32,
     tokens_out: u32,
-    ttft_ms: u64,
-    gen_ms: u64,
 ) -> String {
     // Mikrosekundy jako u64 — NIE float. Podpisywana treść nie może zawierać
     // f64, bo JSON i CBOR serializują go inaczej (naprawa 2026-09-17).

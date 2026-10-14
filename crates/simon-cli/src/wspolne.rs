@@ -116,7 +116,8 @@ pub fn klucz_p2p_z_seeda(seed: &[u8; 32]) -> Keypair {
     Keypair::ed25519_from_bytes(bajty).expect("32 bajty = poprawny klucz")
 }
 
-/// Deterministyczny klucz z seeda — do testów i stabilnych tożsamości.
+/// Deterministyczny klucz z seeda — tylko do testów.
+#[cfg(test)]
 pub fn deterministyczny_klucz(seed: u64) -> Keypair {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();

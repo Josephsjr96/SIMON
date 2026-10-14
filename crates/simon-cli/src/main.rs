@@ -29,6 +29,8 @@ OPCJE:
     --listen <multiaddr>     nasłuch, np. /ip4/0.0.0.0/tcp/9001
     --bootstrap <multiaddr>  peer startowy (inny niż własny adres)
     --model-url <url>        [node] endpoint vLLM, np. http://127.0.0.1:18020
+                             (klucz API backendu, np. AMD Token Factory:
+                             zmienna SIMON_MODEL_API_KEY, nie argument)
     --max-jobs <n>           [node] ile promptów liczyć naraz (domyślnie 1;
                              ustaw na liczbę slotów backendu, np. -np
                              llama-server). Nadmiar czeka w kolejce
