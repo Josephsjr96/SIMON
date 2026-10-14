@@ -46,6 +46,9 @@ pub async fn uruchom(opcje: &Opcje) -> Result<(), String> {
     if opcje.prompt.is_none() && opcje.file.is_none() && opcje.request_file.is_none() {
         return Err("agent wymaga --prompt <tekst>, --file <ścieżka> lub --request-file <ścieżka|->".into());
     }
+    if opcje.request_file.is_some() && opcje.file.is_some() {
+        return Err("--request-file i --file wykluczają się (czat albo map-reduce)".into());
+    }
     // Tryb czatu czytamy PRZED siecią: zły JSON ma paść, zanim cokolwiek wyślemy.
     let czat = match opcje.request_file.as_deref() {
         Some(zrodlo) => Some(wczytaj_zlecenie_czatu(zrodlo)?),

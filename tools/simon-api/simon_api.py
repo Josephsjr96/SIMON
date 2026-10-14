@@ -90,7 +90,8 @@ def completion(req, r, t0):
         "client_observed_ms": int((time.time() - t0) * 1000),
         "receipt_hash": (r.get("obserwacja_klienta") or {}).get("receipt_hash"),
     }
-    return msg, m.get("finish_reason") or "stop", usage, simon
+    finish = m.get("finish_reason") or ("tool_calls" if m.get("tool_calls") else "stop")
+    return msg, finish, usage, simon
 
 
 def _try(f, *a):

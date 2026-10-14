@@ -459,7 +459,9 @@ fn wyjscie(v: &serde_json::Value, chat: bool) -> (String, bool) {
         .filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
     let (tekst, byl_reasoning) = if !surowy.trim().is_empty() {
         (if chat { surowy.to_string() } else { surowy.trim().to_string() }, false)
-    } else if !reasoning.is_empty() && narzedzia.is_none() {
+    } else if !chat && !reasoning.is_empty() {
+        // Tylko tryb tekstowy. W czacie rozumowanie nie jest odpowiedzią:
+        // agent dostałby je jako treść asystenta, podpisaną przez node.
         (reasoning.to_string(), true)
     } else {
         (String::new(), false)
@@ -933,5 +935,9 @@ mod testy_czatu {
         assert_eq!(serde_json::from_str::<serde_json::Value>(&wyjscie(&v2, true).0).unwrap()["finish_reason"], "length");
         // tryb tekstowy: sam tekst, jak dotąd
         assert_eq!(wyjscie(&v2, false).0, "abc");
+        // rozumowanie: w trybie tekstowym zastępuje pustą treść, w czacie nigdy
+        let v3 = json!({"choices": [{"finish_reason": "length", "message": {"content": "", "reasoning": "myślę"}}]});
+        assert_eq!(wyjscie(&v3, false).0, "myślę");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&wyjscie(&v3, true).0).unwrap()["content"], "");
     }
 }
