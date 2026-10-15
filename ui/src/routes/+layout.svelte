@@ -11,6 +11,7 @@
       <div class="flex gap-5 text-neutral-400">
         <a class="hover:text-neutral-100" href="{base}/demo">demo</a>
         <a class="hover:text-neutral-100" href="{base}/network">network</a>
+        <a class="hover:text-neutral-100" href="{base}/industry">industry</a>
         <a class="hover:text-neutral-100" href="https://github.com/Szpili/SIMON" rel="noopener">source</a>
       </div>
     </nav>
