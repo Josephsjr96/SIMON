@@ -8,7 +8,7 @@
   // No fake data: if the monitor is unreachable (e.g. on GitHub Pages) the page says so.
   type Gpu = { name: string; util: number | null; vram_used_mb: number | null; vram_total_mb: number | null;
                temp_c: number | null; power_w: number | null; power_limit_w: number | null };
-  type Node = { label: string; model: string | null; shared_with: string | null; telemetry: 'ok' | 'unavailable' | 'remote'; state: 'active' | 'idle' | 'no_jobs';
+  type Node = { label: string; model: string | null; shared_with: string | null; telemetry: 'ok' | 'unavailable' | 'remote'; canary: { verdict: string; hits: number | null; of: number | null; age_s: number; served_model: string | null } | null; state: 'active' | 'idle' | 'no_jobs';
                 last_job_age_s: number | null; gpu: Gpu | null; history: Record<string, (number | null)[]> };
   type Job = { ts: number; model: string; job_id: string; node_id: string; node_label: string | null;
                completion_tokens: number | null; job_ms: number | null; tok_s: number | null;
@@ -49,6 +49,13 @@
 
   onMount(() => { poll(); const t = setInterval(poll, 2000); return () => clearInterval(t); });
 
+  const canaryTone = (v: string) => (v === 'ok' ? 'text-valid' : v === 'fail' ? 'text-bad' : 'text-amber-400');
+  const canaryText = (c: NonNullable<Node['canary']>) => {
+    const when = c.age_s < 60 ? `${c.age_s}s ago` : `${Math.round(c.age_s / 60)} min ago`;
+    if (c.verdict === 'ok' || c.verdict === 'warn' || c.verdict === 'fail')
+      return `${c.verdict.toUpperCase()} ${c.hits}/${c.of} · ${when} · self-reported`;
+    return c.verdict === 'stale' ? `STALE: last check ${when}` : c.verdict === 'missing' ? 'no result yet' : c.verdict;
+  };
   const stateTone = { active: 'border-valid text-valid', idle: 'border-line text-neutral-300', no_jobs: 'border-line text-neutral-500' };
   const stateText = (n: Node) => (n.state === 'active' ? 'ACTIVE' : n.state === 'idle' ? `last job ${n.last_job_age_s}s ago` : 'no jobs yet');
 </script>
@@ -99,6 +106,11 @@
             </div>
           {:else}
             <p class="mt-3 mono text-xs text-neutral-500">{n.telemetry === 'remote' ? 'no GPU telemetry for this node (remote)' : 'GPU telemetry unavailable (nvidia-smi gave no data)'}</p>
+          {/if}
+          {#if n.canary}
+            <p class="mt-3 mono text-xs {canaryTone(n.canary.verdict)}" title="Operator self-check, reported by the node itself: 8 prompts with one-word answers; catches catastrophic weight corruption (e.g. a flipped exponent bit on a GPU without ECC), not subtle damage and not a lying node.">
+              integrity canary: {canaryText(n.canary)}
+            </p>
           {/if}
           <div class="mt-4">
             <p class="mono text-xs text-neutral-500">tok/s per job (timed by the gateway; includes job setup and time queued on the node)</p>

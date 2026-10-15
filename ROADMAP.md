@@ -203,6 +203,36 @@ z jawnym miejscem, nie jako pominięty punkt.
 | Kopanie z samym sobą / wash trading | emisja | symulacja ekonomii **po M2.5** |
 | Eclipse (odcięcie peera w gossipsub) | dostępność, cenzura | test sieciowy po M2 |
 | DoS / spam zleceń | dostępność | test po M2 |
+| **Uczciwy node z uszkodzonymi wagami** (GPUHammer: Rowhammer na GDDR6 bez ECC, współlokator na karcie; zwykły błąd pamięci) | poprawność wyniku — **ofiara, nie oszust** | symulacja flipów w kopii GGUF (zrobione 2026-10-15, `docs/INTEGRITY-CANARY.md`) |
+
+### Uszkodzone wagi (dopisane 2026-10-15) / Corrupted weights (EN)
+
+**PL.** Karty konsumenckie (3090, TITAN X) nie mają ECC (`nvidia-smi -e 1` → *not supported*). Jeden bit
+wykładnika wagi zamienia model w generator bełkotu, który dalej odpowiada i dalej podpisuje ważne receipty
+poziomu 0. Pomiar: jeden flip w skali bloku `ffn_down` → 0/8 kotwic, w wierszu embeddingu (współdzielona
+głowica wyjściowa) → 2/8; flip w `attn_q` → 8/8 (niewykryty).
+- **Jest:** `tools/simon-canary` — samokontrola operatora: 8 promptów z jednowyrazową odpowiedzią, porażka
+  potwierdzona drugim przebiegiem, `--on-fail` zatrzymuje node (kwarantanna); wynik na karcie `/network`.
+  Łapie tylko katastrofę; raportowany przez sam node, więc chroni uczciwych, nie demaskuje kłamcy.
+- **Zasada już teraz:** porażka kanarka albo rażąca porażka audytu M3 → **kwarantanna i ponowny audyt,
+  nigdy kara**. Uszkodzony node to ofiara; kara za GPUHammer karałaby poszkodowanego.
+- **Następne (protokół):** ukryte sondy ze znaną odpowiedzią, wysyłane przez weryfikatorów i nieodróżnialne
+  od zwykłych zleceń (łapią też podmianę modelu); flaga ECC w ogłoszeniu node'a (deklaracja); badanie:
+  okresowa suma kontrolna buforów wag liczona na GPU (wagi są tylko do odczytu; pełne 24 GB karty 3090
+  to ok. 25 ms przy jej ~936 GB/s) — jedyna metoda, która łapie każdy flip w wagach, nie tylko katastrofalny.
+
+**EN.** Consumer GPUs (3090, TITAN X) have no ECC. One flipped exponent bit turns a model into a garbage
+generator that still answers and still signs valid level-0 receipts. Measured: one flip in an `ffn_down`
+block scale → 0/8 anchors; in an embedding row (tied output head) → 2/8; in `attn_q` → 8/8 (undetected).
+- **Done:** `tools/simon-canary`, an operator self-check (8 one-word-answer prompts, a fail is confirmed by a
+  second run, `--on-fail` stops the node = quarantine), shown on the `/network` card. Catastrophic damage
+  only; self-reported, so it protects honest operators, it does not expose a liar.
+- **Rule from now:** a canary fail or a gross M3 audit failure → **quarantine and re-audit, never a penalty**.
+  A corrupted node is a victim.
+- **Next (protocol):** hidden known-answer probes issued by verifiers, indistinguishable from real jobs (they
+  also catch model substitution); an ECC flag in the node's advertisement (declared); research: a periodic
+  GPU-side checksum of the read-only weight buffers (all 24 GB of a 3090 in ~25 ms at its ~936 GB/s), the only method
+  that catches every weight flip, not just catastrophic ones.
 
 ### ⚠️ Podsłuch w MVP (M1.1) — szansa wycieku
 

@@ -52,6 +52,7 @@ also names what is not done.
 | Agent↔agent orchestration (job B consumes job A's output) | working |
 | OpenAI-compatible API gateway (`tools/simon-api`): each completion is a real SIMON job with its receipt | working |
 | Network monitor (`/network` page + `tools/simon-monitor`) | working |
+| Integrity canary for corrupted weights (GPUs without ECC, GPUHammer): operator self-check, `tools/simon-canary` | working; catastrophic corruption only, see `docs/INTEGRITY-CANARY.md` |
 | Tool calls and streaming through the gateway: coding agents (Cline, opencode) work through SIMON, and the receipt binds tool names, arguments and `finish_reason` | working, tested end to end (`tools/simon-api/check_tools.py`) |
 | Concurrent jobs on one node (`--max-jobs`, a queue, an explicit busy error) | working, measured on MI300X |
 | Model-identity verifier: agent behaviour (LIDAR-style) + single-token output distributions (`tools/simon-lidar`) | pilot, small N: family and size separate, quantization only in the single-token layer, no false alarm on another GPU (`docs/VERIFIER-PILOT.md`) |
@@ -200,6 +201,7 @@ The top of each script documents its file formats.
 - `ROADMAP.md`: what is done, what is blocked, and by what (Polish)
 - `przyklady/README.en.md`: a real receipt that you can verify offline in one command
 - `docs/AMD-MI300X-RESULTS.md`: the MI300X measurements: cross-vendor false positives, node + API, throughput, MoE, concurrency
+- `docs/INTEGRITY-CANARY.md`: corrupted weights on GPUs without ECC (GPUHammer): measured single-bit flips, the canary, its limits
 - `docs/VERIFIER-PILOT.md`: which model does a node serve? Two-layer verifier pilot, results and limits
 - `docs/WASH-COMPUTE.md`: the wash-compute problem, a research proposal, and our review of it
 - `docs/SECURITY-LOG.en.md`: every fix with the behavior it replaced, and the current status table

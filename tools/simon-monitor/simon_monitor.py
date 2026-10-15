@@ -15,6 +15,7 @@ monitor.json:
   node_id     — optional: match jobs by the receipt's node_id instead (two nodes serving one model)
   gpu         — nvidia-smi index (PCI order) to sample, or null for a remote node (no telemetry)
   shared_with — shown on the card: GPU load is not all SIMON's
+  canary      — optional: status file written by tools/simon-canary (operator self-check of the weights)
 
 GET /api/monitor → {generated_at, nodes[], jobs[] (last 50), totals}. No prompts, no
 outputs, no addresses: only what is already in a receipt plus GPU telemetry.
@@ -27,6 +28,23 @@ HOST, PORT = "127.0.0.1", int(os.environ.get("SIMON_MONITOR_PORT", "8081"))
 CONFIG = json.load(open(os.environ["SIMON_MONITOR_CONFIG"])) if os.environ.get("SIMON_MONITOR_CONFIG") else {"nodes": []}
 JOBLOG = os.environ.get("SIMON_API_JOBLOG", "")
 SAMPLE_S, HISTORY, ACTIVE_S, FEED = 2.0, 90, 10, 50
+CANARY_STALE_S = int(os.environ.get("SIMON_CANARY_STALE_S", "1800"))  # 3x the 10-min timer
+
+
+def read_canary(path):
+    """Last integrity-canary result for a node, or None when not configured."""
+    if not path:
+        return None
+    try:
+        c = json.load(open(os.path.expanduser(path)))
+    except (OSError, ValueError):
+        return {"verdict": "missing"}
+    age = round(time.time() - c.get("ts", 0))
+    keep = {k: c.get(k) for k in ("verdict", "hits", "of", "served_model", "confirmed")}
+    keep["age_s"] = age
+    if age > CANARY_STALE_S:
+        keep["verdict"] = "stale"  # a stopped canary must not keep showing its last "ok"
+    return keep
 
 GPU_FIELDS = "index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit"
 
@@ -126,6 +144,7 @@ class State:
                     "state": "active" if last and now - last <= ACTIVE_S else ("idle" if last else "no_jobs"),
                     "last_job_age_s": round(now - last) if last else None,
                     "gpu": g, "history": {k: list(v) for k, v in self.hist[i].items()},
+                    "canary": read_canary(n.get("canary")),
                 })
             return {"generated_at": now, "nodes": nodes, "jobs": list(self.jobs),
                     "totals": json.loads(json.dumps(self.totals))}
@@ -172,6 +191,13 @@ def make_handler(st):
 
 
 def selfcheck():
+    import tempfile
+    cp = tempfile.mktemp()
+    json.dump({"verdict": "ok", "hits": 8, "of": 8, "ts": time.time()}, open(cp, "w"))
+    assert read_canary(cp)["verdict"] == "ok" and read_canary(None) is None
+    json.dump({"verdict": "ok", "hits": 8, "of": 8, "ts": time.time() - CANARY_STALE_S - 5}, open(cp, "w"))
+    assert read_canary(cp)["verdict"] == "stale" and read_canary(cp + ".nope")["verdict"] == "missing"
+    os.remove(cp)
     g = parse_nvidia_csv("1, NVIDIA GeForce RTX 3090, 37, 22976, 24576, 41, 112.40, 350.00\n"
                          "0, NVIDIA GeForce GTX TITAN X, [N/A], 7788, 12288, 30, [N/A], 250.00\nbad line\n")
     assert g[1]["util"] == 37 and g[1]["vram_total_mb"] == 24576 and g[0]["util"] is None and len(g) == 2
