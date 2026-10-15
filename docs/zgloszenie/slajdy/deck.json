@@ -15,6 +15,7 @@
     "network",
     "amd",
     "layer",
+    "verifier",
     "honesty",
     "status",
     "close"
@@ -33,7 +34,7 @@
       "start": "cost"
     },
     "amd": {
-      "description": "The cross-vendor result on MI300X, and what the SIMON layer costs there",
+      "description": "MI300X results, the cost of the SIMON layer, and the model-identity verifier",
       "start": "amd"
     },
     "uczciwosc": {

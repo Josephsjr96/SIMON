@@ -1,0 +1,18 @@
+<section id="verifier" data-transition="fade" style="background:#151B2D; color:#F5F4F1; font-family:'Fira Sans', Verdana, sans-serif; padding:128px 128px 160px; display:flex; flex-direction:column; gap:28px">
+  <p style="font-size:24px; font-weight:700; letter-spacing:4px; color:#D9A441">WHICH MODEL DOES A NODE SERVE? · PILOT</p>
+  <h2 style="font-size:64px; font-weight:700; line-height:1.1">Two layers check which model ran</h2>
+  <p style="font-size:30px; color:#B9BEC9; width:1640px">A receipt shows who signed the output. These two layers check the model from outside the node, through normal SIMON jobs.</p>
+  <table style="font-size:28px; width:1664px; border-collapse:collapse">
+    <tr>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">The node serves</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">Agent behavior (LIDAR-style)</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">One-word answers (JSD)</th>
+    </tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">another model family</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td></tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">another size (0.5B, 3B, 7B, 14B)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td></tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">the same weights in Q4 instead of Q8</td><td style="padding:10px 24px; color:#E08B8B; font-weight:700">not detected (0 of 4)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected (0.43 to 0.51, noise up to 0.27)</td></tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">the same model on another GPU (honest)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">no false alarm (16 of 16)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">no false alarm (0.20 to 0.25)</td></tr>
+  </table>
+  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#8A8F9C; width:1664px">7 model classes on CPU, GTX TITAN X and RTX 3090. Every agent step was a SIMON job with a verified receipt. 4 to 10 fingerprints per class: a pilot, not an error rate.</p>
+  <aside>LIDAR is a 2026 Tsinghua paper. It identifies the model behind an agent from what the agent does. Its authors did not release code or data, so we built our own tasks and references. The second layer follows Bruckner, One Token Is Enough: ask trivial one-word questions many times and compare the answer distributions. Agent behavior finds the family and the size, but it does not see a quantization change. The one-word layer sees it. Neither layer raised a false alarm when the same model moved to another GPU. The thresholds must be set for each declared model. The tasks are public, so a production verifier needs secret, rotating probes. Full report and raw data: docs/VERIFIER-PILOT.md.</aside>
+</section>

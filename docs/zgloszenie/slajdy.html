@@ -157,6 +157,24 @@
   <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#6A7179; width:1664px">Qwen3.8-27B BF16, vLLM 0.27.1, 256 tokens per job. One job takes about 14 ms more. The client ran on the same host, so the WAN is not in these numbers.</p>
   <aside>Until 12 October a SIMON node ran one prompt at a time, and it lost some parallel prompts. Now the node runs jobs concurrently, with a limit and an explicit busy error. At 16 and 64 streams the SIMON rows are a little higher. We do not claim a speed-up: each job is a separate agent process, so the requests arrive spread out, and the direct client sends them in waves. Read it as no measurable overhead. Raw data: docs/amd-data/simon-amd-overhead-2026-10-13.jsonl.</aside>
 </section>
+<section id="verifier" data-transition="fade" style="background:#151B2D; color:#F5F4F1; font-family:'Fira Sans', Verdana, sans-serif; padding:128px 128px 160px; display:flex; flex-direction:column; gap:28px">
+  <p style="font-size:24px; font-weight:700; letter-spacing:4px; color:#D9A441">WHICH MODEL DOES A NODE SERVE? · PILOT</p>
+  <h2 style="font-size:64px; font-weight:700; line-height:1.1">Two layers check which model ran</h2>
+  <p style="font-size:30px; color:#B9BEC9; width:1640px">A receipt shows who signed the output. These two layers check the model from outside the node, through normal SIMON jobs.</p>
+  <table style="font-size:28px; width:1664px; border-collapse:collapse">
+    <tr>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">The node serves</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">Agent behavior (LIDAR-style)</th>
+      <th style="text-align:left; padding:10px 24px; border-bottom:2px solid #D9A441; font-weight:700">One-word answers (JSD)</th>
+    </tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">another model family</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td></tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">another size (0.5B, 3B, 7B, 14B)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected</td></tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">the same weights in Q4 instead of Q8</td><td style="padding:10px 24px; color:#E08B8B; font-weight:700">not detected (0 of 4)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">detected (0.43 to 0.51, noise up to 0.27)</td></tr>
+    <tr><td style="padding:10px 24px; color:#B9BEC9">the same model on another GPU (honest)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">no false alarm (16 of 16)</td><td style="padding:10px 24px; color:#7FB069; font-weight:700">no false alarm (0.20 to 0.25)</td></tr>
+  </table>
+  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#8A8F9C; width:1664px">7 model classes on CPU, GTX TITAN X and RTX 3090. Every agent step was a SIMON job with a verified receipt. 4 to 10 fingerprints per class: a pilot, not an error rate.</p>
+  <aside>LIDAR is a 2026 Tsinghua paper. It identifies the model behind an agent from what the agent does. Its authors did not release code or data, so we built our own tasks and references. The second layer follows Bruckner, One Token Is Enough: ask trivial one-word questions many times and compare the answer distributions. Agent behavior finds the family and the size, but it does not see a quantization change. The one-word layer sees it. Neither layer raised a false alarm when the same model moved to another GPU. The thresholds must be set for each declared model. The tasks are public, so a production verifier needs secret, rotating probes. Full report and raw data: docs/VERIFIER-PILOT.md.</aside>
+</section>
 <section id="honesty" data-transition="fade" style="background:#F5F4F1; color:#151B2D; font-family:'Fira Sans', Verdana, sans-serif; padding:112px 128px; display:flex; flex-direction:column; gap:30px">
   <h2 style="font-size:64px; font-weight:700; line-height:1.1">Three of our own claims, withdrawn in public</h2>
   <div style="display:flex; flex-direction:column; gap:14px; width:1664px">
@@ -188,19 +206,20 @@
   <h2 style="font-size:72px; font-weight:700; line-height:1.1">Status, without rounding up</h2>
   <table style="font-size:32px; width:1664px; border-collapse:collapse">
     <tr>
-      <th style="text-align:left; padding:11px 24px; border-bottom:2px solid #D9A441; font-weight:700">Capability</th>
-      <th style="text-align:left; padding:11px 24px; border-bottom:2px solid #D9A441; font-weight:700">State</th>
+      <th style="text-align:left; padding:9px 24px; border-bottom:2px solid #D9A441; font-weight:700">Capability</th>
+      <th style="text-align:left; padding:9px 24px; border-bottom:2px solid #D9A441; font-weight:700">State</th>
     </tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Output binding</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Offline receipt verification by a third party</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Chunking, map-reduce, agent-to-agent chaining</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">working</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Concurrent jobs on one node, with a busy limit</td><td style="padding:11px 24px; color:#7FB069; font-weight:700">working, measured on MI300X</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Token counts recomputed independently</td><td style="padding:11px 24px; color:#D9A441; font-weight:700">partial: backends expose no token ids</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Execution correctness (TopLoc-style audit)</td><td style="padding:11px 24px; color:#E08B8B; font-weight:700">not implemented</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Automatic slashing</td><td style="padding:11px 24px; color:#E08B8B; font-weight:700">off by decision: no defensible threshold</td></tr>
-    <tr><td style="padding:11px 24px; color:#B9BEC9">Wash-compute resistance</td><td style="padding:11px 24px; color:#E08B8B; font-weight:700">unsolved</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Output binding</td><td style="padding:9px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Offline receipt verification by a third party</td><td style="padding:9px 24px; color:#7FB069; font-weight:700">implemented, tested</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Chunking, map-reduce, agent-to-agent chaining</td><td style="padding:9px 24px; color:#7FB069; font-weight:700">working</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Concurrent jobs on one node, with a busy limit</td><td style="padding:9px 24px; color:#7FB069; font-weight:700">working, measured on MI300X</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Which model a node serves (two-layer verifier)</td><td style="padding:9px 24px; color:#D9A441; font-weight:700">pilot: family, size, quantization</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Token counts recomputed independently</td><td style="padding:9px 24px; color:#D9A441; font-weight:700">partial: backends expose no token ids</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Execution correctness (TopLoc-style audit)</td><td style="padding:9px 24px; color:#E08B8B; font-weight:700">not implemented</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Automatic slashing</td><td style="padding:9px 24px; color:#E08B8B; font-weight:700">off by decision: no defensible threshold</td></tr>
+    <tr><td style="padding:9px 24px; color:#B9BEC9">Wash-compute resistance</td><td style="padding:9px 24px; color:#E08B8B; font-weight:700">unsolved</td></tr>
   </table>
-  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#8A8F9C; width:1664px">189 tests green · CI on every push, with a guard against constants that pose as measurements</p>
+  <p style="position:absolute; left:128px; bottom:64px; font-size:24px; color:#8A8F9C; width:1664px">192 tests green · CI on every push, with a guard against constants that pose as measurements</p>
   <aside>A fingerprint mismatch triggers a re-audit, not punishment. We will not ship a threshold that we cannot defend. The ledger records work, never a balance, because verified work is not the same as independent demand. The words double the color here, so the table still reads without it.</aside>
 </section>
 <section id="close" data-transition="fade" style="background:#151B2D; color:#F5F4F1; font-family:'Fira Sans', Verdana, sans-serif; padding:128px; display:flex; flex-direction:column; justify-content:center; gap:44px">
