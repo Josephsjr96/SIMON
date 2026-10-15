@@ -11,6 +11,8 @@ job with a verified receipt):
 | Agent behaviour | `lidar.py` | 3 small coding tasks with A/B variants (verify, recover, resolve). An agent with tools runs each task; about 190 features describe what it does. | LIDAR, Tsinghua University, arXiv:2609.28559 |
 | Single-token distributions | `onetoken.py` | 10 one-word questions (random number, colour, city, coin...) in English and Polish, temperature 1.0, Jensen-Shannon divergence | Bruckner, "One Token Is Enough", arXiv:2607.10252 |
 
+Pilot results, raw data and limits: `docs/VERIFIER-PILOT.md`.
+
 The authors of LIDAR did not release code, tasks or fingerprints, so this repository builds its own
 references. The verdict is open-set: `consistent`, `inconsistent` or `inconclusive`. A model that is not in
 the reference set does not get a confident answer.
