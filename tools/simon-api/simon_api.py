@@ -8,11 +8,13 @@ The answer comes back with the node's signed receipt and the client-side verdict
     curl -s 127.0.0.1:18600/v1/chat/completions -d '{"model":"qwen3.8-27b-bf16","messages":[...]}'
 
 nodes.json: {"<model name>": {"bootstrap": "/ip4/.../tcp/.../p2p/<peer_id>", "model_hash": "..."}}
+A model may map to a LIST of such nodes: jobs rotate across them, and an unreachable or busy
+node hands the job to the next one. The file is re-read when it changes (add a node, no restart).
 
 What a receipt proves here: the node's key signed this exact output for this job
 (proof level 0). It does NOT prove which model ran — see docs/THREAT-MODEL.md.
 """
-import json, os, subprocess, threading, time, uuid
+import itertools, json, os, subprocess, threading, time, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BIN = os.environ.get("SIMON_BIN", "simon")
@@ -23,7 +25,32 @@ IDENTITY = os.environ.get("SIMON_API_IDENTITY", os.path.expanduser("~/.simon/api
 # timings only — never the prompt or the output.
 JOBLOG = os.environ.get("SIMON_API_JOBLOG", "")
 _joblog_lock = threading.Lock()
-NODES = json.load(open(os.environ["SIMON_API_NODES"])) if os.environ.get("SIMON_API_NODES") else {}
+NODES_PATH = os.environ.get("SIMON_API_NODES", "")
+NODES, _nodes_mtime, _rr = {}, None, {}
+_nodes_lock = threading.Lock()
+
+
+def load_nodes():
+    """{model: [node, ...]}, re-read when nodes.json changes on disk (a node joins without a restart).
+    A model may map to one node or to a LIST of nodes: jobs rotate across them."""
+    global NODES, _nodes_mtime
+    with _nodes_lock:
+        m = os.path.getmtime(NODES_PATH) if NODES_PATH else None
+        if m != _nodes_mtime:
+            raw = json.load(open(NODES_PATH)) if NODES_PATH else {}
+            NODES = {k: (v if isinstance(v, list) else [v]) for k, v in raw.items()}
+            _nodes_mtime = m
+        return NODES
+
+
+def nodes_in_turn(model):
+    """The model's nodes, starting at the next one in rotation."""
+    nodes = load_nodes().get(model) or []
+    if not nodes:
+        return []
+    with _nodes_lock:
+        i = next(_rr.setdefault(model, itertools.count())) % len(nodes)
+    return nodes[i:] + nodes[:i]
 
 
 # Fields of an OpenAI request that travel to the node (the node keeps the same whitelist).
@@ -64,6 +91,21 @@ def run_job(node, req, max_tokens):
     return r
 
 
+def run_on_nodes(nodes, req, max_tokens):
+    """First node that completes the job. Unreachable, busy or a failed check -> the next node.
+    A timeout is NOT retried: that node may still be computing, and the job must not run twice."""
+    errors = []
+    for node in nodes:
+        try:
+            return run_job(node, req, max_tokens)
+        except subprocess.TimeoutExpired:
+            raise
+        except Exception as e:
+            errors.append(str(e))
+    raise RuntimeError(("node_zajety: " if all("node_zajety" in e for e in errors) else "")
+                       + f"failed on {len(errors)} node(s): {errors[-1]}")
+
+
 def completion(req, r, t0):
     """Message, finish_reason, usage and the receipt block of one verified SIMON job.
 
@@ -87,6 +129,9 @@ def completion(req, r, t0):
         "proof_note": "the node's key signed this exact output (text and tool calls) for this job; "
                       "this does NOT prove which model or precision ran",
         "receipt": rc,
+        # the exact string the receipt's output_digest covers: lets the client (or anyone it shows the
+        # answer to) re-check the binding offline. Never written to the public job log.
+        "signed_output": r.get("output"),
         "client_observed_ms": int((time.time() - t0) * 1000),
         "receipt_hash": (r.get("obserwacja_klienta") or {}).get("receipt_hash"),
     }
@@ -118,9 +163,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.rstrip("/") in ("/v1/models", "/models"):
             return self._send(200, {"object": "list", "data": [
-                {"id": m, "object": "model", "owned_by": "simon", "model_hash": n["model_hash"]} for m, n in NODES.items()]})
+                {"id": m, "object": "model", "owned_by": "simon", "model_hash": n[0]["model_hash"], "nodes": len(n)}
+                for m, n in load_nodes().items()]})
         if self.path == "/health":
-            return self._send(200, {"status": "ok", "models": list(NODES)})
+            return self._send(200, {"status": "ok", "models": list(load_nodes())})
         self._err(404, "not found")
 
     def do_POST(self):
@@ -130,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         except ValueError:
             return self._err(400, "invalid JSON")
-        node = NODES.get(req.get("model"))
+        node = nodes_in_turn(req.get("model"))  # the node list, in rotation order
         if not node:
             return self._err(404, f"unknown model {req.get('model')!r}; see /v1/models")
         msgs = req.get("messages")
@@ -140,7 +186,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream(node, req)
         t0 = time.time()
         try:
-            r = run_job(node, req, int(req.get("max_tokens") or 512))
+            r = run_on_nodes(node, req, int(req.get("max_tokens") or 512))
         except subprocess.TimeoutExpired:
             return self._err(504, "SIMON job timed out")
         except Exception as e:  # node unreachable, verification failure, etc.
@@ -180,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
 
         ev({"role": "assistant", "content": ""})
         box = {}
-        th = threading.Thread(target=lambda: box.update(r=_try(run_job, node, req, int(req.get("max_tokens") or 512))))
+        th = threading.Thread(target=lambda: box.update(r=_try(run_on_nodes, node, req, int(req.get("max_tokens") or 512))))
         th.start()
         while th.is_alive():
             th.join(5)
@@ -207,7 +253,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    if not NODES:
+    if not load_nodes():
         raise SystemExit("set SIMON_API_NODES to a nodes.json file")
-    print(f"[simon-api] http://{HOST}:{PORT}  models: {', '.join(NODES)}", flush=True)
+    print(f"[simon-api] http://{HOST}:{PORT}  models: " + ", ".join(f"{m} ({len(n)})" for m, n in NODES.items()), flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
